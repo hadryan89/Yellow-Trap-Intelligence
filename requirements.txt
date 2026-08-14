@@ -1,0 +1,10 @@
+# A calibracao dos parametros de recorte foi feita no Colab com OpenCV 4.x.
+# O teto <5.0.0 evita que um "pip install -U" troque a major version e mude
+# silenciosamente o resultado da deteccao de linhas.
+opencv-python>=4.8.0,<5.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+watchdog>=3.0.0
+colorlog>=6.7.0
+pytest>=7.4.0
