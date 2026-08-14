@@ -4,7 +4,7 @@ Processamento automatizado de imagens de armadilhas amarelas (YellowTrap) usadas
 na captura e identificação de pragas na lavoura — tripes, afídeos, cigarrinhas,
 mosca branca.
 
-**Setor de Inovação — Grupo Progresso** · Região MATOPIBA (Sebastião Leal/PI)
+**VARD** · Região MATOPIBA (Sebastião Leal/PI)
 
 O sistema recebe as fotos individuais dos quadrantes da placa (capturadas por
 câmera/microscópio), recorta cada quadrante e remonta a placa completa por
