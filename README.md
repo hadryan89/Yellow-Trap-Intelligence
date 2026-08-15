@@ -7,24 +7,28 @@ mosca branca.
 **VARD** · Região MATOPIBA (Sebastião Leal/PI)
 
 O sistema recebe as fotos individuais dos quadrantes da placa (capturadas por
-câmera/microscópio), recorta cada quadrante e remonta a placa completa por
-*image stitching*. A identificação das pragas por *deep learning* é uma etapa
-posterior, fora do escopo deste repositório.
+câmera/microscópio), **renomeia** segundo o esquema escolhido e **recorta** o
+quadrante central de cada uma. A entrega final são os quadrantes limpos — a
+identificação das pragas por *deep learning* é uma etapa posterior, fora do
+escopo deste repositório.
 
-Esta é a migração dos 3 protocolos validados no Google Colab para execução local
-em VS Code. **A lógica de negócio, os algoritmos e os parâmetros de calibração
-foram preservados exatamente como validados** — a refatoração adiciona apenas
-modularização, configuração centralizada, logs, paralelismo, watcher e testes.
+Os algoritmos e os parâmetros de calibração são os validados no Google Colab e
+**foram preservados exatamente**: o resultado do recorte é byte-a-byte idêntico
+ao da versão anterior deste pipeline, em qualquer modo de operação (há um teste
+que trava isso).
 
 ---
 
 ## Índice
 
-- [O pipeline em 3 etapas](#o-pipeline-em-3-etapas)
+- [O pipeline em 2 etapas](#o-pipeline-em-2-etapas)
+- [Modos de operação](#modos-de-operação)
 - [Requisitos](#requisitos)
 - [Setup](#setup)
 - [Comandos rápidos](#comandos-rápidos)
 - [Como usar](#como-usar)
+- [Usando como biblioteca](#usando-como-biblioteca)
+- [Escala: milhares de fotos](#escala-milhares-de-fotos)
 - [Estrutura do projeto](#estrutura-do-projeto)
 - [Configuração](#configuração)
 - [Como interpretar os logs](#como-interpretar-os-logs)
@@ -36,41 +40,67 @@ modularização, configuração centralizada, logs, paralelismo, watcher e teste
 
 ---
 
-## O pipeline em 3 etapas
+## O pipeline em 2 etapas
 
 ```
 data/01_entrada_bruta/     DSC0001.JPG ... DSC0040.JPG   (nomes da câmera)
         │
-        │  Protocolo 1 — renomeação (cópia byte-a-byte + conferência MD5)
+        │  Etapa 1 — nomeação: monta o de-para (a1..d10 ou VARD0000001...)
+        │            e SÓ materializa 02_renomeadas se você pedir
         ▼
-data/02_renomeadas/        a1.jpg a2.jpg ... d10.jpg
+data/02_renomeadas/        (opcional — ver "materialização" abaixo)
         │
-        │  Protocolo 2 — recorte do quadrante central (PARALELO, N processos)
+        │  Etapa 2 — recorte do quadrante central (PARALELO, N processos)
         ▼
-data/03_recortadas/        a1.png a2.png ... d10.png
+data/03_recortadas/        a1.png … d10.png   ou   VARD0000001.png …
         │
-        │  Protocolo 3 — stitching (layout horizontal 4 linhas × 10 colunas)
-        ▼
-data/04_placas_montadas/<lote_id>/
-                           placa_LOSSLESS.png     ← arquivo mestre
-                           placa_CIENTIFICO.tiff  ← abre no ImageJ/Fiji
-                           placa_10k.jpg / placa_4k.jpg / placa_1200p.jpg / placa_720p.jpg
-                           placa_WEBP.webp
-                           sumario.json
+        └─ data/_relatorios/<lote_id>/sumario.json
 ```
 
-**Layout da placa montada** — cada letra é uma faixa horizontal, cada número é
-uma coluna:
+**A montagem da placa (stitching) foi removida.** O pipeline termina nos
+quadrantes recortados.
 
-```
-[a1  a2  a3  a4  a5  a6  a7  a8  a9  a10]
-[b1  b2  b3  b4  b5  b6  b7  b8  b9  b10]
-[c1  c2  c3  c4  c5  c6  c7  c8  c9  c10]
-[d1  d2  d3  d4  d5  d6  d7  d8  d9  d10]
+### Materialização: por que 02_renomeadas é opcional
+
+Renomear não exige escrever um segundo lote em disco. O recorte **sempre** grava
+um arquivo novo, então o nome novo pode ser aplicado direto nele — o quadrante
+já nasce como `VARD0000001.png`. É isso que a estratégia `virtual` faz, e é o
+que torna viável processar milhares de fotos:
+
+| Estratégia | O que faz | Custo em disco | Quando usar |
+|---|---|---|---|
+| `virtual` | não escreve nada; o nome vai direto no recorte | zero | **default** do modo sequencial; lotes grandes |
+| `hardlink` | cria um link em `02_renomeadas` | zero (mesmo volume) | quer ver as renomeadas sem duplicar |
+| `copiar` | cópia byte-a-byte + conferência MD5 | 1× o lote | **default** do modo grid; rastreabilidade |
+| `mover` | move o arquivo (esvazia a entrada) | zero | pasta de entrada é descartável |
+
+---
+
+## Modos de operação
+
+Escolha com `--modo`. **A única coisa que muda entre os modos é o NOME do
+arquivo de saída** — o recorte é bit-a-bit o mesmo.
+
+| Modo | Nomes gerados | Limite de fotos | Materialização default |
+|---|---|---|---|
+| `grid` | `a1, a2 … d10` (posição na placa) | 40 (as posições do grid) | `copiar` + MD5 |
+| `sequencial` | `VARD0000001, VARD0000002 …` | nenhum | `virtual` |
+| `recorte` | preserva o nome de origem | nenhum | `virtual` |
+
+```powershell
+# O padrão de sempre: 40 fotos viram a1..d10 recortadas
+python scripts/run_pipeline.py --modo grid
+
+# Só renomear (VARD0000001) e recortar — para lotes de qualquer tamanho
+python scripts/run_pipeline.py --modo sequencial
+
+# Só recortar, mantendo os nomes
+python scripts/run_pipeline.py --modo recorte
 ```
 
-Célula sem quadrante vira um **placeholder amarelo** `(40, 230, 250)` — fica
-visualmente óbvio qual quadrante faltou.
+No modo `grid`, fotos que passarem das 40 posições **não são processadas** — e
+isso aparece como `ERROR` no log e no sumário (`Ignoradas`), nunca como um
+descarte silencioso. Lote maior que o grid → use `--modo sequencial`.
 
 ---
 
@@ -81,14 +111,13 @@ visualmente óbvio qual quadrante faltou.
 | Sistema operacional | Windows 10/11 (testado no Windows 11) — também roda em Linux/macOS |
 | Python | 3.11 ou superior (validado em 3.14.4) |
 | OpenCV | linha **4.x** (`>=4.8.0,<5.0.0`) |
-| RAM | 8 GB para lotes de 40 fotos; 16 GB recomendado |
-| Disco | ~3× o tamanho do lote bruto (renomeadas + recortadas + placa) |
+| RAM | ~300 MB por worker com fotos de 9600×5400 (ver [Escala](#escala-milhares-de-fotos)) |
+| Disco | o recorte em PNG lossless ocupa ~30 MB por foto de 51 MP |
 
 > **Por que OpenCV 4.x e não 5.x?** A calibração dos parâmetros de detecção foi
 > feita no Colab com OpenCV 4. O `requirements.txt` trava a major version para
 > que um `pip install -U` não troque silenciosamente o motor de processamento e
-> mude o resultado do recorte. Se um dia for necessário migrar para OpenCV 5,
-> rode a suíte de testes antes e compare as placas geradas.
+> mude o resultado do recorte.
 
 ---
 
@@ -133,23 +162,22 @@ Interpreter* → `.venv\Scripts\python.exe`.
 pip install -e .
 ```
 
-Cria os comandos `yellowtrap-pipeline` e `yellowtrap-watcher` e dispensa o ajuste
-de `sys.path` feito pelos scripts.
+Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
+`yellowtrap-watcher` e dispensa o ajuste de `sys.path` feito pelos scripts.
 
 ---
 
 ## Comandos rápidos
 
-Referência de bolso — cada comando está detalhado nas seções seguintes.
-
 | Comando | O que faz |
 |---|---|
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
-| `python scripts/run_pipeline_completo.py` | roda as 3 etapas de uma vez (modo batch) |
+| `python scripts/run_pipeline.py --modo grid` | padrão histórico: a1..d10 + recorte |
+| `python scripts/run_pipeline.py --modo sequencial` | VARD0000001 + recorte, sem limite de quantidade |
+| `python scripts/run_pipeline.py --simular` | mostra o plano de nomes sem gravar nada |
+| `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
 | `python scripts/watcher.py` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
 | `python scripts/watcher.py --uma-vez` | um único ciclo do watcher e sai (cron / n8n) |
-| `python scripts/run_apenas_recorte.py` | só o Protocolo 2 (recorte dos quadrantes) |
-| `python scripts/run_apenas_stitching.py` | só o Protocolo 3 (montagem da placa) |
 | `python -m pytest` | suíte completa de testes |
 | `python tests/fixtures/gerar_fixtures.py` | regera as imagens sintéticas de teste |
 
@@ -157,9 +185,17 @@ Fluxo típico do dia a dia:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1                   # ativa o ambiente
-# copie as 40 fotos para data\01_entrada_bruta\
-python scripts/run_pipeline_completo.py        # placa pronta em data\04_placas_montadas\
+# copie as fotos para data\01_entrada_bruta\
+python scripts/run_pipeline.py --modo grid     # quadrantes em data\03_recortadas\
 ```
+
+**Código de saída** (útil no n8n / Agendador de Tarefas):
+
+| Código | Significa |
+|---|---|
+| `0` | lote concluído sem nenhuma falha |
+| `1` | falha estrutural — pasta inexistente, lote vazio, nada processado |
+| `2` | lote concluído, mas com falhas individuais — confira `data/_falhas/` |
 
 ---
 
@@ -167,88 +203,157 @@ python scripts/run_pipeline_completo.py        # placa pronta em data\04_placas_
 
 ### Modo batch (execução única, sob demanda)
 
-Coloque as 40 fotos em `data/01_entrada_bruta/` e rode:
-
 ```powershell
-python scripts/run_pipeline_completo.py
-```
+# Pasta de entrada diferente e 12 processos
+python scripts/run_pipeline.py --modo sequencial --entrada "D:\envio_42" --workers 12
 
-Opções:
+# Saída em outra pasta (um job por pasta, por exemplo)
+python scripts/run_pipeline.py --modo sequencial --saida "D:\saida\job_42"
 
-```powershell
-# Pasta de entrada diferente e 4 processos
-python scripts/run_pipeline_completo.py --entrada "D:\fotos\lote_07" --workers 4
+# Segundo envio continua a numeração do primeiro (…41, 42, 43)
+python scripts/run_pipeline.py --modo sequencial --continuar
+
+# Retomar um lote interrompido: pula o que já foi recortado
+python scripts/run_pipeline.py --modo sequencial --retomar
+
+# Ver o de-para antes de processar (não grava nada)
+python scripts/run_pipeline.py --modo sequencial --simular
+
+# Amostra rápida das 20 primeiras fotos
+python scripts/run_pipeline.py --modo sequencial --limite 20
+
+# Prefixo/dígitos próprios: LAV000001
+python scripts/run_pipeline.py --modo sequencial --prefixo LAV --digitos 6
 
 # Quadrantes em TIFF LZW em vez de PNG
-python scripts/run_pipeline_completo.py --formato tiff
+python scripts/run_pipeline.py --formato tiff
 
-# Gera também o ZIP (ZIP_STORED) das fotos renomeadas
-python scripts/run_pipeline_completo.py --zip
-
-# Fotos já nomeadas a1..d10: pula a renomeação
-python scripts/run_pipeline_completo.py --pular-renomeacao
-
-# Identificador de lote fixo (em vez do timestamp)
-python scripts/run_pipeline_completo.py --lote-id LOTE_2026_08_13_TALHAO_3
-
-# Log DEBUG no console
-python scripts/run_pipeline_completo.py --verbose
+# Grid guardando as renomeadas e o ZIP de integridade
+python scripts/run_pipeline.py --modo grid --materializar copiar --zip
 ```
-
-O código de saída é `0` em caso de sucesso e `1` se o lote falhou — útil para
-encadear em scripts ou no n8n.
 
 ### Modo watcher (contínuo, vigiando a pasta)
 
 ```powershell
-python scripts/watcher.py
+python scripts/watcher.py                               # grid, lote de 40
+python scripts/watcher.py --modo sequencial --tamanho-lote 0
 ```
 
 O watcher fica rodando e:
 
 1. Detecta arquivos novos em `data/01_entrada_bruta/` via `watchdog`.
-2. Agrupa por prefixo do nome (`IMG_001…IMG_040` → grupo `IMG_`).
-3. Só considera um arquivo pronto depois que o **tamanho fica estável por 2
+2. Só considera um arquivo pronto depois que o **tamanho fica estável por 2
    ciclos** — evita processar foto pela metade enquanto o cartão ainda copia.
-4. Quando o grupo chega a 40 fotos, isola o lote em
-   `data/01_entrada_bruta/_lotes/<lote_id>/` e dispara o pipeline completo.
-5. **Lote incompleto NÃO é processado.** O watcher espera indefinidamente e
-   avisa a cada 30 s de inatividade quantas fotos faltam:
-
-   ```
-   [WARNING] [watcher] Lote INCOMPLETO 'IMG_': 35/40 foto(s) - faltam 5.
-                       Aguardando (nada sera processado pela metade).
-   ```
-
-6. Grava o histórico em `.watcher_state.json` — reiniciar o watcher não
+3. Fecha o lote de dois jeitos, conforme a operação:
+   - **por contagem** (`--tamanho-lote 40`, default): agrupa por prefixo do nome
+     (`IMG_001…IMG_040` → grupo `IMG_`) e só dispara com o grupo completo. Lote
+     incompleto **nunca** é processado — avisa a cada 30 s quantas fotos faltam;
+   - **por quietude** (`--tamanho-lote 0`): passados 30 s sem chegar arquivo
+     novo, processa tudo que estiver estável — sejam 12 ou 12.000 fotos. É o
+     modo certo para "alguém subiu uma pasta inteira".
+4. Isola o lote em `data/01_entrada_bruta/_lotes/<lote_id>/` e dispara o
+   pipeline.
+5. Grava o histórico em `.watcher_state.json` — reiniciar o watcher não
    reprocessa nada.
-
-Opções:
 
 ```powershell
 python scripts/watcher.py --uma-vez          # roda um ciclo e sai (cron / n8n)
-python scripts/watcher.py --tamanho-lote 20  # placa com outro número de quadrantes
-python scripts/watcher.py --workers 6
+python scripts/watcher.py --workers 12 --retomar
 python scripts/watcher.py --forcar           # ignora o histórico e reprocessa
 python scripts/watcher.py --resetar-estado   # apaga o .watcher_state.json
 ```
 
 Encerre com `Ctrl+C` — o estado é salvo antes de sair.
 
-### Rodar etapas isoladas
+---
 
-```powershell
-# Só o recorte (reprocessar sem refazer a renomeação)
-python scripts/run_apenas_recorte.py
-python scripts/run_apenas_recorte.py --formato tiff --workers 6
+## Usando como biblioteca
 
-# Só o stitching (ex.: depois de trocar um quadrante ruim na mão)
-python scripts/run_apenas_stitching.py
-python scripts/run_apenas_stitching.py --escala 0.5   # prévia rápida
+Este código foi feito para viver dentro de um sistema maior (API, fila, n8n).
+O ponto de entrada é um só, e toda a configuração de uma execução cabe num
+objeto serializável:
+
+```python
+from src.opcoes import OpcoesProcessamento
+from src.pipeline import executar_processamento
+
+opcoes = OpcoesProcessamento(
+    modo="sequencial",                 # "grid" | "sequencial" | "recorte"
+    pasta_entrada="D:/uploads/job_42",
+    pasta_recortadas="D:/saida/job_42",
+    workers=12,
+    continuar_numeracao=True,          # não colide com o acervo já existente
+    pular_existentes=True,             # retomada barata
+    contexto={"job": 42, "usuario": "app"},   # carimbo livre, volta no JSON
+)
+
+sumario = executar_processamento(opcoes)
+
+sumario.sucesso          # rodou até o fim e produziu quadrantes
+sumario.sem_falhas       # ...e nenhuma foto ficou pelo caminho
+sumario.recortadas_ok    # contadores exatos
+sumario.to_dict()        # pronto para POST / banco / fila
 ```
 
-> `--escala` abaixo de 1.0 gera uma placa reduzida. Serve para conferência
-> visual rápida — **não use para o arquivo científico.**
+Quer só o de-para, sem processar? O plano de nomeação é uma peça isolada:
+
+```python
+from src.renomeacao import planejar_nomeacao
+from src.utils import listar_imagens
+
+plano = planejar_nomeacao(listar_imagens("D:/uploads/job_42"), modo="sequencial")
+plano.mapeamento   # [('DSC0001.JPG', 'VARD0000001.jpg'), ...]
+```
+
+Outras entradas úteis: `src.pipeline.processar_pasta(pasta, modo=...)`,
+`src.pipeline.etapa_recorte(sumario, itens, opcoes)`,
+`src.recorte.processar_foto(caminho, nome_saida=...)`.
+
+`executar_pipeline_completo(...)`, a assinatura antiga, continua funcionando
+(sem a etapa de stitching).
+
+---
+
+## Escala: milhares de fotos
+
+O pipeline foi dimensionado para lotes de milhares de imagens. O que sustenta
+isso, na prática:
+
+| Ponto | Como é tratado |
+|---|---|
+| **I/O da renomeação** | a estratégia `virtual` não copia nada — o nome novo vai direto no arquivo do recorte. Um lote de 2.000 fotos de 12 MB deixa de escrever ~24 GB inúteis |
+| **Cópia com MD5** (quando pedida) | o MD5 da origem é calculado **durante** a cópia: 2 leituras em vez de 3, e as cópias rodam em várias threads (I/O-bound) |
+| **Fila de tarefas** | submissão em janela (`workers × 4`): 50.000 fotos não viram 50.000 `Future` vivos no processo pai |
+| **Resultados** | acima de 500 itens a agregação é incremental (callback) — a memória do processo pai fica constante |
+| **Logs dos workers** | limitados a `INFO` (cada registro atravessa uma fila entre processos) |
+| **Listagem de pastas** | `os.scandir` em vez de `iterdir` + `stat` por arquivo |
+| **Sumário** | contadores exatos + detalhamento limitado a 200 falhas: um lote inteiro ruim não gera um JSON de centenas de MB |
+| **Retomada** | `--retomar` pula quem já tem quadrante na saída — interrupção não custa o lote inteiro |
+| **Estado do watcher** | histórico podado nos 50.000 arquivos mais recentes |
+| **Worker morto (OOM)** | se o pool quebrar, os itens pendentes são reprocessados sequencialmente em vez de perder o lote |
+
+### Dimensionamento
+
+Medido nesta máquina (12 CPUs) com as fotos reais de produção — 9600×5400 px
+(51 MP), ~12 MB por JPEG:
+
+| Grandeza | Medição |
+|---|---|
+| Pico de RAM **por worker** | ~300 MB (imagem decodificada = 155 MB + temporários) |
+| RAM do processo **pai** | 45 MB, constante — igual em 40 e em 600 fotos |
+| 40 fotos · 6 workers · PNG | 44,6 s → **0,90 foto/s** |
+| 600 fotos · 10 workers · `jpg_max` | 3 min 54 s → **2,56 foto/s** |
+| Saída por quadrante | ~30 MB em PNG lossless · ~11 MB em `jpg_max` |
+
+Consequências práticas para um lote de **2.000 fotos**:
+
+- **tempo**: ~37 min com 6 workers em PNG; ~13 min com 10 workers em `jpg_max`;
+- **disco**: ~60 GB em PNG. Se o destino for treino/inferência e não arquivo
+  científico, `--formato jpg_max` derruba para ~22 GB;
+- **RAM**: `--workers` × ~300 MB — 12 workers cabem folgados em 8 GB. O limite
+  real costuma ser CPU e disco, não memória.
+
+> Regra de bolso: `workers = min(CPUs - 1, RAM_livre_GB / 0,5)`.
 
 ---
 
@@ -260,33 +365,31 @@ yellowtrap_pipeline/
 ├── config/
 │   └── settings.py              TODOS os parâmetros ajustáveis
 ├── src/
-│   ├── renomeacao.py            Protocolo 1 (+ MD5 + ZIP_STORED)
-│   ├── recorte.py               Protocolo 2 (detecção de grade + crop)
-│   ├── stitching.py             Protocolo 3 (montagem da placa)
-│   ├── exportacao.py            salvamento em múltiplos formatos
+│   ├── opcoes.py                OpcoesProcessamento (contrato de entrada)
+│   ├── renomeacao.py            Etapa 1 (plano de nomes + materialização)
+│   ├── recorte.py               Etapa 2 (detecção de grade + crop)
+│   ├── exportacao.py            gravação dos quadrantes
 │   ├── paralelismo.py           wrapper de ProcessPoolExecutor
-│   ├── pipeline.py              orquestração das 3 etapas
+│   ├── pipeline.py              orquestração das 2 etapas
 │   └── utils.py                 logging, memória, falhas, sumário
 ├── data/
 │   ├── 01_entrada_bruta/        fotos originais (+ _lotes/ com o histórico)
-│   ├── 02_renomeadas/           a1.jpg … d10.jpg
-│   ├── 03_recortadas/           quadrantes limpos
-│   ├── 04_placas_montadas/      <lote_id>/placa_*.png|tiff|jpg|webp
+│   ├── 02_renomeadas/           só é preenchida se a estratégia pedir
+│   ├── 03_recortadas/           quadrantes limpos  ← entrega final
+│   ├── _relatorios/             <lote_id>/sumario.json
 │   ├── _falhas/                 fotos problemáticas + JSON do motivo
 │   └── _zips/                   ZIPs de integridade (se habilitado)
 ├── logs/pipeline.log            rotativo: 10 MB × 5 arquivos
 ├── scripts/
 │   ├── setup_inicial.py
-│   ├── run_pipeline_completo.py
+│   ├── run_pipeline.py          entrada principal (--modo)
 │   ├── run_apenas_recorte.py
-│   ├── run_apenas_stitching.py
 │   └── watcher.py
 └── tests/
     ├── fixtures/gerar_fixtures.py    gera as imagens sintéticas de teste
     ├── test_renomeacao.py
     ├── test_recorte.py
-    ├── test_stitching.py
-    └── test_pipeline.py             integração + paralelismo
+    └── test_pipeline.py             integração + paralelismo + modos
 ```
 
 Nos módulos `src/`, os blocos marcados como
@@ -309,9 +412,6 @@ número mágico.
 
 ### Parâmetros calibrados — não altere
 
-Estes valores são o resultado de dezenas de iterações de calibração no Colab.
-Alterá-los muda o recorte e invalida a validação:
-
 ```python
 RECORTE_FATOR_DETECCAO       = 0.25         # detecção roda em 25% do tamanho
 RECORTE_MARGEM               = 8            # px afastados da linha detectada
@@ -320,8 +420,8 @@ RECORTE_SPAN_V_INICIAL_FRAC  = 0.5
 RECORTE_SPAN_H_INICIAL_FRAC  = 0.5
 RECORTE_SPAN_MINIMO_FRAC     = 0.15
 RECORTE_DILATAR              = True
-STITCHING_ESCALA_CARREGAMENTO = 1.0         # resolução cheia
-STITCHING_COR_PLACEHOLDER     = (40, 230, 250)
+RECORTE_LIMIAR_FRAC          = 0.25
+RECORTE_MIN_DIST             = 30
 ```
 
 Há um teste (`test_parametros_de_calibracao_preservados`) que **quebra a suíte se
@@ -331,14 +431,19 @@ qualquer um desses valores for alterado** — de propósito.
 
 | Parâmetro | Default | O que faz |
 |---|---|---|
-| `RECORTE_FORMATO_SAIDA` | `'png'` | formato dos quadrantes: `png`, `tiff`, `jpg_max` |
+| `MODO_PADRAO` | `'grid'` | modo usado quando ninguém passa `--modo` |
+| `SEQUENCIAL_PREFIXO` / `_DIGITOS` | `'VARD'` / `7` | formato do nome sequencial |
+| `SEQUENCIAL_CONTINUAR_NUMERACAO` | `False` | continua a numeração do acervo existente |
+| `RENOMEACAO_ESTRATEGIA` | por modo | `virtual` / `hardlink` / `copiar` / `mover` |
+| `RENOMEACAO_VERIFICAR_MD5` | `True` | conferência da cópia (só afeta `copiar`) |
+| `RECORTE_FORMATO_SAIDA` | `'png'` | `png`, `tiff`, `jpg_max` |
+| `RECORTE_PULAR_EXISTENTES` | `False` | retomada automática |
+| `LIMPAR_PASTAS_INTERMEDIARIAS` | `False` | esvazia `03_recortadas` antes do lote |
 | `NUM_WORKERS` | `None` | processos paralelos; `None` = CPUs − 1 |
-| `EXPORTACAO_RESOLUCOES` | 10k/4k/1200p/720p | resoluções de saída da placa |
-| `EXPORTACAO_INCLUIR_*` | `True` | liga/desliga PNG lossless, TIFF, WEBP |
-| `WATCHER_INTERVALO_POLL_SEG` | `5` | intervalo entre ciclos do watcher |
-| `WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG` | `30` | intervalo do aviso de lote incompleto |
+| `PARALELISMO_JANELA_POR_WORKER` | `4` | tarefas em voo por worker |
+| `PARALELISMO_LIMIAR_STREAMING` | `500` | a partir daqui a agregação é incremental |
+| `SUMARIO_MAX_FALHAS_DETALHADAS` | `200` | detalhamento das falhas no sumário |
 | `WATCHER_CICLOS_ESTABILIDADE` | `2` | ciclos com tamanho estável antes de aceitar o arquivo |
-| `RENOMEACAO_CRIAR_ZIP` | `False` | ZIP de integridade (dobra o uso de disco) |
 | `RECORTE_FALHA_DETECCAO_E_ERRO` | `False` | ver [Tratamento de falhas](#tratamento-de-falhas) |
 | `LOG_NIVEL_CONSOLE` | `'INFO'` | verbosidade do console |
 
@@ -346,7 +451,7 @@ qualquer um desses valores for alterado** — de propósito.
 
 ```powershell
 $env:YELLOWTRAP_DATA_DIR = "D:\yellowtrap\data"
-python scripts/run_pipeline_completo.py
+python scripts/run_pipeline.py --modo sequencial
 ```
 
 ---
@@ -357,7 +462,7 @@ Formato: `[data hora] [NÍVEL] [módulo] mensagem`
 
 - **Console** — colorido (`colorlog`), nível `INFO`.
 - **Arquivo** — `logs/pipeline.log`, nível `DEBUG`, rotativo (10 MB × 5
-  arquivos: `pipeline.log`, `pipeline.log.1`, … `pipeline.log.5`).
+  arquivos).
 
 Os processos paralelos **não escrevem no arquivo diretamente** — eles mandam os
 registros por uma fila para o processo principal, que grava. Isso evita corrupção
@@ -368,36 +473,33 @@ do log por escrita concorrente no Windows.
 | Nível | Significa | O que fazer |
 |---|---|---|
 | `INFO` | andamento normal | nada |
-| `WARNING` | processou, mas com ressalva (quadrante sem detecção, lote incompleto, célula com placeholder) | **conferir a placa gerada** |
-| `ERROR` | uma foto falhou; o lote continuou | ver `data/_falhas/` |
+| `WARNING` | processou, mas com ressalva (quadrante sem detecção, lote incompleto) | **conferir os quadrantes citados** |
+| `ERROR` | uma foto falhou (ou ficou de fora do grid); o lote continuou | ver `data/_falhas/` |
 | `CRITICAL` | falha estrutural | ver o traceback no `pipeline.log` |
 
 ### Sumário final
 
-Impresso no console e salvo em `<pasta_de_saída>/sumario.json`:
+Impresso no console e salvo em `data/_relatorios/<lote_id>/sumario.json`:
 
 ```
 ====================================================================
-SUMARIO DO LOTE 20260813_140828
+SUMARIO DO LOTE 20260815_110928  (modo: grid)
 ====================================================================
   Fotos de entrada .............. 40
-  Renomeadas (MD5 conferido) .... 40      ← integridade byte-a-byte OK
+  Nomeadas ...................... 40
   Recortadas com sucesso ........ 40
-  Recortadas SEM deteccao ....... 0       ← >0 exige conferência visual
+  Recortadas SEM deteccao ....... 1       ← exige conferência visual
   Falhas ........................ 0
-  Quadrantes no stitching ....... 40
-  Celulas placeholder ........... 0       ← >0 = buraco amarelo na placa
-  Placa montada ................. 3360 x 3200 px (L x A)
-  Arquivos gerados .............. 5
-  Pasta de saida ................ ...\data\04_placas_montadas\20260813_140828
-  Memoria (fim do lote) ......... 50 MB
-  Tempo total ................... 5.10s
+  Pasta de saida ................ ...\data\03_recortadas
+  Memoria (fim do lote) ......... 45 MB
+  Tempo total ................... 44.61s
+  Throughput .................... 0.90 foto/s
 ====================================================================
 ```
 
-As duas linhas que mais importam na rotina são **`Recortadas SEM deteccao`** e
-**`Celulas placeholder`**: qualquer valor maior que zero significa que a placa
-final tem quadrante suspeito ou faltando.
+A linha que mais importa na rotina é **`Recortadas SEM deteccao`**: qualquer
+valor maior que zero significa que aquele quadrante saiu com a foto inteira, sem
+recorte.
 
 ---
 
@@ -410,44 +512,48 @@ Toda falha gera um `.json` em `data/_falhas/<lote_id>/`:
 
 ```json
 {
-  "arquivo": "...\\data\\02_renomeadas\\a5.png",
-  "arquivo_nome": "a5.png",
+  "arquivo": "...\\data\\01_entrada_bruta\\DSC0005.JPG",
+  "arquivo_nome": "DSC0005.JPG",
   "etapa": "recorte",
   "motivo": "Imagem ilegivel (cv2.imread retornou None)",
-  "lote_id": "LOTE_FALHAS",
-  "timestamp": "2026-08-13T14:09:42",
+  "lote_id": "20260815_110928",
+  "timestamp": "2026-08-15T11:09:42",
   "detalhes": {},
-  "arquivo_em_falhas": "...\\data\\_falhas\\LOTE_FALHAS\\a5.png"
+  "arquivo_em_falhas": "...\\data\\_falhas\\20260815_110928\\DSC0005.JPG"
 }
 ```
 
-### Os três tipos de falha
+### Os tipos de falha
 
 | Situação | O que acontece | Arquivo movido? |
 |---|---|---|
-| **Imagem ilegível/corrompida** | quadrante não é gerado; célula vira placeholder | sim, vai para `_falhas/` |
+| **Imagem ilegível/corrompida** | quadrante não é gerado; entra em `Falhas` | só se estiver numa pasta intermediária (ver abaixo) |
 | **MD5 divergente na renomeação** | cópia rejeitada | sim, vai para `_falhas/` |
 | **Detecção da grade falhou** | quadrante é salvo com a **imagem cheia, sem recorte** + `WARNING` | **não** — só o JSON de diagnóstico |
+| **Foto além das 40 posições (modo grid)** | não é processada; entra em `Ignoradas` + `ERROR` | não |
+
+> **O arquivo original do usuário nunca é movido.** Quando o recorte lê direto
+> da pasta de entrada (estratégia `virtual`), a foto problemática fica onde
+> está e só o JSON vai para `_falhas/`. O arquivo só é movido quando o que
+> falhou é uma cópia em `02_renomeadas`, que o pipeline mesmo criou.
 
 O terceiro caso preserva o comportamento validado no Colab: sem as linhas da
-grade, a função devolve a imagem inteira. O quadrante entra na placa, mas com
-os vizinhos junto — por isso o `WARNING` e o contador `Recortadas SEM deteccao`.
-
-Se preferir que esse caso seja tratado como falha dura (quadrante não gerado,
-célula com placeholder amarelo bem visível), mude em `settings.py`:
+grade, a função devolve a imagem inteira. Para tratá-lo como falha dura (nenhum
+quadrante gerado, foto movida para `_falhas/`):
 
 ```python
 RECORTE_FALHA_DETECCAO_E_ERRO = True
 ```
 
+Em lotes muito grandes, `RECORTE_REGISTRAR_JSON_SEM_DETECCAO = False` evita
+gerar milhares de JSONs de diagnóstico — os contadores do sumário continuam.
+
 ### Reprocessando uma falha
 
 ```powershell
-# 1. corrija/refotografe o quadrante e coloque em data/02_renomeadas/ com o nome certo
-# 2. rode só o recorte
-python scripts/run_apenas_recorte.py
-# 3. remonte a placa
-python scripts/run_apenas_stitching.py
+# 1. corrija/refotografe a foto e coloque de volta na pasta de entrada
+# 2. rode com --retomar: só o que falta é processado
+python scripts/run_pipeline.py --modo sequencial --retomar
 ```
 
 ---
@@ -455,38 +561,39 @@ python scripts/run_apenas_stitching.py
 ## Testes
 
 ```powershell
-python -m pytest              # suíte completa (59 testes)
-python -m pytest -m "not lento"   # pula os testes de integração
+python -m pytest                  # suíte completa (89 testes)
+python -m pytest -m "not lento"   # pula os testes de integração pesados
 python -m pytest tests/test_recorte.py -v
 ```
 
 As imagens de teste são **geradas** por `tests/fixtures/gerar_fixtures.py` na
-primeira execução — nada de binário no repositório. Para regerar:
-
-```powershell
-python tests/fixtures/gerar_fixtures.py
-```
-
-A fixture principal (`foto_grade_valida.png`) imita o que a câmera produz: fundo
-amarelo, 3 quadrantes na horizontal, as duas linhas do quadrante central
-inteiras e as linhas dos vizinhos cortadas pelo enquadramento — que é exatamente
-o contraste de intensidade usado pelo algoritmo para escolher o par central.
+primeira execução — nada de binário no repositório.
 
 ### O que os testes travam
 
+- **o recorte é idêntico nos três modos** e igual ao do recorte avulso
+  (`test_recorte_identico_em_todos_os_modos`) — mudar de modo muda o nome do
+  arquivo e nada mais;
 - os **parâmetros de calibração** e os *defaults* das funções migradas
   (comparados por `inspect.signature`);
 - a **detecção**: 4 picos encontrados, crop entre as duas linhas centrais, altura
   preservada inteira no modo `so_vertical`;
 - **crop em resolução cheia**: a saída é bit-a-bit igual a `original[y1:y2, x1:x2]`;
 - **lossless**: PNG e TIFF relidos do disco batem exatamente com o array em memória;
-- **layout do stitching**: `a1` no topo-esquerda, `d10` embaixo-direita, letras
-  como linhas e números como colunas (blindagem contra placa transposta);
-- **placeholder** amarelo nas células ausentes;
-- **ordem natural** da renomeação (`img2` antes de `img10`) e cópia byte-a-byte;
-- **ZIP** em modo `ZIP_STORED` e detecção de divergência de MD5;
-- **robustez**: foto corrompida não derruba o lote; ordem dos resultados
-  preservada no paralelismo.
+- **ordem natural** (`img2` antes de `img10`) e cópia byte-a-byte com MD5;
+- **plano sequencial** sem teto de quantidade, com índice inicial e continuação
+  da numeração;
+- **estratégias de materialização**: `virtual` não escreve nada, `mover` esvazia
+  a origem, cópia em paralelo não embaralha a ordem;
+- **robustez**: foto corrompida não derruba o lote, arquivo sumido no meio da
+  cópia não derruba a etapa, ordem dos resultados preservada no paralelismo,
+  janela de submissão não perde item, retomada não reprocessa.
+
+### Equivalência com a versão anterior
+
+O resultado foi conferido nas 40 fotos reais de produção: os 40 quadrantes
+gerados por esta versão são **byte-a-byte idênticos** (MD5) aos gerados pela
+versão com stitching, tanto no modo `grid` quanto no `sequencial`.
 
 ---
 
@@ -498,14 +605,8 @@ o contraste de intensidade usado pelo algoritmo para escolher o par central.
 | Crop em resolução cheia | a detecção devolve **frações** (`crop_box_frac`), aplicadas na imagem original |
 | Sem re-encoding intermediário | o crop é uma *slice* NumPy da imagem decodificada; nada é recomprimido antes de salvar |
 | Saída lossless | PNG (`IMWRITE_PNG_COMPRESSION=1`) ou TIFF LZW (`IMWRITE_TIFF_COMPRESSION=5`) |
-| Integridade na renomeação | `shutil.copy` + MD5 conferido em ambos os lados |
+| Renomear não toca no pixel | o nome novo é só o caminho de gravação; com `copiar`, MD5 conferido dos dois lados |
 | ZIP sem recompressão | `zipfile.ZIP_STORED` + verificação de MD5 dos bytes dentro do ZIP |
-| Sem upscale na exportação | resoluções maiores que a placa são puladas (registrado em DEBUG) |
-
-Uma nota sobre `EXPORTACAO_RESOLUCOES`: se a placa montada tiver menos de
-3840 px de largura, os perfis `10k` e `4k` são **ignorados** — o pipeline nunca
-inventa pixel que não existe. A largura da placa é
-`10 × largura_do_quadrante_recortado`.
 
 ---
 
@@ -517,78 +618,79 @@ passa pela raiz do projeto. Ative com `.\.venv\Scripts\Activate.ps1` e rode a
 partir da pasta do projeto. Alternativa definitiva: `pip install -e .`
 
 **`cv2.imread` retorna `None` / "Imagem ilegivel"**
-Três causas comuns: (1) arquivo corrompido no cartão — reveja a foto original;
-(2) extensão que o OpenCV não abre (HEIC, RAW) — converta para JPEG/PNG antes;
-(3) caminho com acentos. O terceiro caso já tem resgate automático via
-`imread_fallback`, mas se o problema persistir, mova os dados para um caminho
-sem acentos usando `YELLOWTRAP_DATA_DIR`.
+Três causas comuns: (1) arquivo corrompido no cartão; (2) extensão que o OpenCV
+não abre (HEIC, RAW) — converta para JPEG/PNG antes; (3) caminho com acentos. O
+terceiro caso já tem resgate automático via `imread_fallback`.
 
 **Muitos `Recortadas SEM deteccao`**
 A grade não está sendo encontrada. Verifique iluminação e contraste — as linhas
 pretas precisam ficar nitidamente mais escuras que o fundo amarelo. **Não mude
 os parâmetros de calibração para "resolver"**: isso muda o recorte de todas as
-fotos boas também. Prefira corrigir a captura. Se realmente for necessário
-recalibrar, faça em ambiente de teste e rode a suíte comparando as placas.
+fotos boas também.
 
-**A placa saiu transposta / quadrantes fora de ordem**
-As fotos não estavam na sequência `a1 → d10`. A renomeação usa a **ordem natural
-dos nomes de arquivo**, então a garantia de ordem vem da captura. Confira em
-`data/02_renomeadas/` se `a1.jpg` é mesmo o primeiro quadrante.
+**Fotos ficaram de fora / `Ignoradas` > 0**
+Você está no modo `grid`, que tem exatamente 40 posições. Rode com
+`--modo sequencial`.
 
-**`MemoryError` no stitching**
-A placa completa é um array de `10 × largura × 4 × altura × 3` bytes. Com
-quadrantes de 2000×3000 px isso passa de 1 GB. Opções: reduza
-`EXPORTACAO_RESOLUCOES`, desligue `EXPORTACAO_INCLUIR_TIFF`, ou gere a prévia com
-`run_apenas_stitching.py --escala 0.5` antes do arquivo final.
+**Nomes colidindo entre envios**
+No modo sequencial, cada execução recomeça em `VARD0000001` e sobrescreve o
+envio anterior. Use `--continuar` (ou uma `--saida` por job).
 
-**Watcher não dispara**
-Confira: (1) o grupo já tem 40 fotos com o mesmo prefixo? Nomes misturados
-(`IMG_001` e `DSC0002`) formam grupos diferentes; (2) as fotos já foram
-processadas antes? Veja `.watcher_state.json` — use `--forcar` para reprocessar;
-(3) `watchdog` está instalado? Sem ele o watcher ainda funciona, mas só por
-polling (avisa no log ao iniciar).
+**`MemoryError` / o processo morre no meio**
+Workers demais para a RAM: cada um chega a ~300 MB com fotos de 51 MP (mais, se
+as suas forem maiores). Baixe `--workers`. Se o pool quebrar, o pipeline
+reprocessa o que faltou sequencialmente e avisa no log — o lote não se perde.
 
-**Lote incompleto travado esperando para sempre**
-É o comportamento configurado: nada é processado pela metade. Se quiser montar a
-placa com o que existe, rode o modo batch manualmente — as células faltantes
-viram placeholder amarelo.
+**Está lento**
+Confira, nesta ordem: (1) `--workers` (o default deixa 1 core livre); (2) a
+estratégia de renomeação — `copiar` com MD5 lê e escreve o lote inteiro antes de
+começar, use `virtual`; (3) o formato de saída — PNG lossless de 51 MP é caro,
+`--formato jpg_max` é ~10× menor e mais rápido de gravar; (4) se as fotos estão
+num disco de rede, copie para o disco local antes.
+
+**Disco enchendo**
+PNG lossless de um quadrante de 51 MP dá ~30 MB. 2.000 fotos = ~60 GB. Use
+`--formato jpg_max` ou aponte a saída para outro volume com `--saida`.
 
 **A barra de progresso aparece como "erro" no PowerShell**
 O `tqdm` escreve na saída de erro padrão e o PowerShell marca isso como
-`NativeCommandError`. É cosmético; o pipeline rodou normalmente. Para silenciar,
+`NativeCommandError`. É cosmético. Para silenciar,
 `PARALELISMO_CHUNK_TQDM = False` em `settings.py`.
 
-**Está lento**
-O default deixa 1 core livre. Em uma máquina dedicada, suba os workers:
-`--workers 12`. Se o gargalo for disco (fotos grandes em rede), mais workers não
-ajudam — copie o lote para o disco local antes.
+**Watcher não dispara**
+Confira: (1) no modo por contagem, o grupo já tem 40 fotos com o **mesmo
+prefixo**? Nomes misturados formam grupos diferentes — para envios heterogêneos
+use `--tamanho-lote 0`; (2) as fotos já foram processadas antes? Veja
+`.watcher_state.json` — use `--forcar`; (3) `watchdog` está instalado? Sem ele o
+watcher ainda funciona, mas só por polling.
 
 ---
 
 ## Integração com n8n / Railway
-
-O pipeline já expõe os ganchos necessários para automação:
 
 **Webhook de fim de lote** — defina a variável de ambiente e o sumário completo
 é enviado por `POST` (JSON) ao final de cada execução:
 
 ```powershell
 $env:YELLOWTRAP_WEBHOOK_URL = "https://SEU-N8N.exemplo.com/webhook/yellowtrap"
-python scripts/watcher.py
+python scripts/watcher.py --modo sequencial --tamanho-lote 0
 ```
 
-O corpo do POST é o mesmo conteúdo do `sumario.json` (lote, contagens, falhas,
-arquivos gerados, duração). Usa só a stdlib — sem dependência extra.
+O corpo do POST é o mesmo conteúdo do `sumario.json` (lote, modo, contagens,
+falhas, throughput, duração). Usa só a stdlib — sem dependência extra.
 
 **Execução agendada** — `python scripts/watcher.py --uma-vez` roda um ciclo e sai
-com código `0`/`1`, adequado para Agendador de Tarefas do Windows, cron ou um nó
-*Execute Command* do n8n.
+com código `0`/`1`/`2`, adequado para Agendador de Tarefas do Windows, cron ou um
+nó *Execute Command* do n8n.
 
-**Próximo passo natural** — a pasta `data/03_recortadas/` é exatamente a entrada
-que o modelo de deep learning espera: 40 quadrantes limpos, nomeados por posição
-no grid. A inferência pode ler dessa pasta (ou consumir o `sumario.json` para
-saber quais quadrantes são confiáveis) sem tocar em nada deste repositório.
+**Embutido no sistema** — veja [Usando como biblioteca](#usando-como-biblioteca):
+`OpcoesProcessamento` + `executar_processamento` cobrem os três modos sem
+subprocesso.
+
+**Próximo passo natural** — `data/03_recortadas/` é exatamente a entrada que o
+modelo de deep learning espera: quadrantes limpos, com nome estável e
+rastreável pelo `sumario.json`.
 
 ---
 
-*Grupo Progresso — Setor de Inovação · versão 1.0.0*
+*Grupo Progresso — Setor de Inovação · versão 2.0.0*

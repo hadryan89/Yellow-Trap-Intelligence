@@ -50,12 +50,6 @@ def foto_sem_grade() -> Path:
 
 
 @pytest.fixture
-def quadrante_pequeno() -> Path:
-    """Quadrante 60x40 usado nos testes de stitching."""
-    return PASTA_FIXTURES / "quadrante_pequeno.png"
-
-
-@pytest.fixture
 def pastas_isoladas(tmp_path, monkeypatch):
     """
     Redireciona TODAS as pastas de dados para tmp_path.
@@ -67,7 +61,7 @@ def pastas_isoladas(tmp_path, monkeypatch):
         "PASTA_ENTRADA": tmp_path / "01_entrada_bruta",
         "PASTA_RENOMEADAS": tmp_path / "02_renomeadas",
         "PASTA_RECORTADAS": tmp_path / "03_recortadas",
-        "PASTA_PLACAS": tmp_path / "04_placas_montadas",
+        "PASTA_RELATORIOS": tmp_path / "_relatorios",
         "PASTA_FALHAS": tmp_path / "_falhas",
         "PASTA_ZIPS": tmp_path / "_zips",
         "PASTA_LOGS": tmp_path / "logs",
@@ -83,11 +77,3 @@ def pastas_isoladas(tmp_path, monkeypatch):
 def criar_quadrante(cor_bgr, largura: int = 20, altura: int = 12) -> np.ndarray:
     """Cria um quadrante solido de cor conhecida (helper dos testes)."""
     return np.full((altura, largura, 3), cor_bgr, dtype=np.uint8)
-
-
-def cor_da_celula(placa: np.ndarray, indice_linha: int, indice_coluna: int,
-                  altura_celula: int, largura_celula: int) -> tuple[int, int, int]:
-    """Le o pixel central de uma celula da placa montada."""
-    y = indice_linha * altura_celula + altura_celula // 2
-    x = indice_coluna * largura_celula + largura_celula // 2
-    return tuple(int(v) for v in placa[y, x])

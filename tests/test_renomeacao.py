@@ -1,10 +1,12 @@
 """
-Testes do protocolo 1 (renomeacao com verificacao de integridade).
+Testes do protocolo 1 (nomeacao das imagens).
 
 Pontos criticos:
-  * ordem natural (img2 antes de img10) - se a ordem quebrar, TODA a placa
-    fica com os quadrantes trocados;
+  * ordem natural (img2 antes de img10) - se a ordem quebrar, todo o de-para
+    sai trocado;
   * a copia tem que ser byte-a-byte identica (MD5 conferido);
+  * o plano sequencial (VARD0000001) nao pode ter teto de quantidade;
+  * a estrategia 'virtual' nao pode escrever nada em disco;
   * o ZIP tem que ser ZIP_STORED (sem recompressao).
 """
 
@@ -16,11 +18,15 @@ import pytest
 
 from config import settings
 from src.renomeacao import (
+    aplicar_plano,
     calcular_hash_md5,
     criar_zip_sem_compressao,
     executar_renomeacao,
     gerar_mapeamento,
+    mapear_sequencial,
     natural_key,
+    planejar_nomeacao,
+    proximo_indice_sequencial,
     renomear_com_verificacao,
     verificar_integridade_zip,
 )
@@ -93,6 +99,150 @@ def test_mapeamento_ignora_extensoes_nao_suportadas(tmp_path):
     mapeamento, total_arquivos, _ = gerar_mapeamento(tmp_path, ["a"], [1, 2])
     assert total_arquivos == 1
     assert mapeamento == [("IMG_1.jpg", "a1.jpg")]
+
+
+# ---------------------------------------------------------------------------
+# Plano sequencial (VARD0000001)
+# ---------------------------------------------------------------------------
+
+
+def test_sequencial_gera_nomes_com_zero_a_esquerda(tmp_path):
+    caminhos = _criar_fotos(tmp_path, ["DSC1.JPG", "DSC2.jpg", "DSC3.png"])
+    itens = mapear_sequencial(caminhos, prefixo="VARD", digitos=7, inicio=1)
+
+    assert [i.nome_novo for i in itens] == [
+        "VARD0000001.jpg", "VARD0000002.jpg", "VARD0000003.png",
+    ]
+    assert itens[0].stem_novo == "VARD0000001"
+
+
+def test_sequencial_nao_tem_teto_de_quantidade(tmp_path):
+    """O grid para em 40; o sequencial precisa aguentar o lote inteiro."""
+    nomes = [f"IMG_{i:05d}.jpg" for i in range(1, 2001)]
+    caminhos = [tmp_path / nome for nome in nomes]  # sem tocar no disco
+
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
+
+    assert len(plano) == 2000
+    assert plano.ignorados == []
+    assert plano.itens[0].nome_novo == "VARD0000001.jpg"
+    assert plano.itens[-1].nome_novo == "VARD0002000.jpg"
+
+
+def test_sequencial_respeita_o_indice_inicial(tmp_path):
+    caminhos = _criar_fotos(tmp_path, ["a.jpg", "b.jpg"])
+    itens = mapear_sequencial(caminhos, inicio=41)
+    assert [i.nome_novo for i in itens] == ["VARD0000041.jpg", "VARD0000042.jpg"]
+
+
+def test_proximo_indice_le_o_maior_ja_existente(tmp_path):
+    _criar_fotos(tmp_path, ["VARD0000001.png", "VARD0000042.png", "outro.png"])
+    assert proximo_indice_sequencial(tmp_path) == 43
+
+
+def test_proximo_indice_em_pasta_vazia_usa_o_inicio(tmp_path):
+    assert proximo_indice_sequencial(tmp_path, inicio=1) == 1
+    assert proximo_indice_sequencial(tmp_path / "nao_existe", inicio=7) == 7
+
+
+def test_plano_do_grid_marca_o_que_ficou_de_fora(tmp_path):
+    caminhos = _criar_fotos(tmp_path, [f"IMG_{i}.jpg" for i in range(1, 6)])
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_GRID,
+                              letras=["a"], numeros=[1, 2])
+
+    assert len(plano) == 2
+    assert plano.total_arquivos == 5
+    assert plano.ignorados == ["IMG_3.jpg", "IMG_4.jpg", "IMG_5.jpg"]
+
+
+def test_modo_recorte_preserva_o_nome(tmp_path):
+    caminhos = _criar_fotos(tmp_path, ["FOTO_A.JPG"])
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_RECORTE)
+    assert plano.itens[0].nome_novo == "FOTO_A.JPG"
+
+
+# ---------------------------------------------------------------------------
+# Estrategias de materializacao
+# ---------------------------------------------------------------------------
+
+
+def test_estrategia_virtual_nao_escreve_nada(tmp_path):
+    """O ganho de escala vem daqui: renomear sem duplicar o lote em disco."""
+    origem = tmp_path / "origem"
+    destino = tmp_path / "destino"
+    origem.mkdir()
+    caminhos = _criar_fotos(origem, ["IMG_1.jpg", "IMG_2.jpg"])
+
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
+    resultado = aplicar_plano(plano, destino,
+                              estrategia=settings.ESTRATEGIA_VIRTUAL)
+
+    assert not destino.exists()
+    assert resultado.itens == [
+        (str(origem / "IMG_1.jpg"), "VARD0000001"),
+        (str(origem / "IMG_2.jpg"), "VARD0000002"),
+    ]
+
+
+def test_estrategia_hardlink_nao_duplica_conteudo(tmp_path):
+    origem = tmp_path / "origem"
+    destino = tmp_path / "destino"
+    origem.mkdir()
+    caminhos = _criar_fotos(origem, ["IMG_1.jpg"])
+
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
+    aplicar_plano(plano, destino, estrategia=settings.ESTRATEGIA_HARDLINK)
+
+    alvo = destino / "VARD0000001.jpg"
+    assert alvo.read_bytes() == (origem / "IMG_1.jpg").read_bytes()
+
+
+def test_estrategia_mover_esvazia_a_origem(tmp_path):
+    origem = tmp_path / "origem"
+    destino = tmp_path / "destino"
+    origem.mkdir()
+    caminhos = _criar_fotos(origem, ["IMG_1.jpg"])
+
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
+    aplicar_plano(plano, destino, estrategia=settings.ESTRATEGIA_MOVER)
+
+    assert not (origem / "IMG_1.jpg").exists()
+    assert (destino / "VARD0000001.jpg").exists()
+
+
+def test_materializacao_em_paralelo_preserva_a_ordem(tmp_path):
+    """As threads terminam fora de ordem; a fila de saida nao pode embaralhar."""
+    origem = tmp_path / "origem"
+    destino = tmp_path / "destino"
+    origem.mkdir()
+    caminhos = _criar_fotos(origem, [f"IMG_{i:03d}.jpg" for i in range(1, 31)])
+
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
+    resultado = aplicar_plano(plano, destino,
+                              estrategia=settings.ESTRATEGIA_COPIAR, workers=8)
+
+    assert [stem for _, stem in resultado.itens] == [
+        f"VARD{i:07d}" for i in range(1, 31)
+    ]
+    assert len(resultado.hashes) == 30
+    assert resultado.falhas == []
+
+
+def test_arquivo_ilegivel_nao_derruba_a_materializacao(tmp_path):
+    origem = tmp_path / "origem"
+    destino = tmp_path / "destino"
+    origem.mkdir()
+    caminhos = _criar_fotos(origem, ["IMG_1.jpg", "IMG_2.jpg"])
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
+    (origem / "IMG_1.jpg").unlink()  # some antes da copia
+
+    resultado = aplicar_plano(plano, destino,
+                              estrategia=settings.ESTRATEGIA_COPIAR,
+                              registrar_falhas=False)
+
+    assert len(resultado.falhas) == 1
+    assert resultado.falhas[0]["arquivo"] == "IMG_1.jpg"
+    assert [stem for _, stem in resultado.itens] == ["VARD0000002"]
 
 
 # ---------------------------------------------------------------------------

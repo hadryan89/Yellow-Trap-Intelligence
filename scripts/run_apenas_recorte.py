@@ -1,20 +1,20 @@
 """
-Roda SOMENTE o protocolo 2 (recorte do quadrante central), em paralelo.
+Roda SOMENTE o recorte, preservando os nomes dos arquivos de entrada.
 
-Util para reprocessar recortes sem refazer a renomeacao, ou para testar o
-efeito de um formato de saida diferente.
+Atalho para `run_pipeline.py --modo recorte` com a entrada apontando para
+data/02_renomeadas/. Util para reprocessar recortes sem refazer a nomeacao,
+ou para testar o efeito de um formato de saida diferente.
 
 Uso:
     python scripts/run_apenas_recorte.py
     python scripts/run_apenas_recorte.py --entrada data/02_renomeadas --workers 6
-    python scripts/run_apenas_recorte.py --formato tiff
+    python scripts/run_apenas_recorte.py --formato tiff --retomar
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -22,19 +22,15 @@ if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
 from config import settings  # noqa: E402
-from src.pipeline import etapa_recorte, novo_lote_id  # noqa: E402
-from src.utils import (  # noqa: E402
-    SumarioLote,
-    configurar_logging,
-    garantir_pastas,
-    medir_memoria_mb,
-    obter_logger,
-)
+from src.exportacao import FORMATOS_VALIDOS  # noqa: E402
+from src.opcoes import OpcoesProcessamento  # noqa: E402
+from src.pipeline import executar_processamento  # noqa: E402
+from src.utils import configurar_logging  # noqa: E402
 
 
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="YellowTrap Pipeline - apenas o recorte (protocolo 2)",
+        description="YellowTrap Pipeline - apenas o recorte (sem renomear)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--entrada", type=Path, default=settings.PASTA_RENOMEADAS,
@@ -43,9 +39,15 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="pasta de destino dos quadrantes")
     parser.add_argument("--workers", type=int, default=None,
                         help="numero de processos paralelos (default: CPUs - 1)")
-    parser.add_argument("--formato", choices=["png", "tiff", "jpg_max"],
-                        default=settings.RECORTE_FORMATO_SAIDA,
+    parser.add_argument("--formato", choices=list(FORMATOS_VALIDOS), default=None,
                         help="formato dos quadrantes recortados")
+    parser.add_argument("--limite", type=int, default=None,
+                        help="processa apenas as N primeiras fotos")
+    parser.add_argument("--retomar", dest="pular_existentes", action="store_true",
+                        default=None,
+                        help="pula fotos cujo quadrante ja existe na saida")
+    parser.add_argument("--limpar-saida", dest="limpar_saida", action="store_true",
+                        default=None, help="esvazia a pasta de recortes antes")
     parser.add_argument("--lote-id", default=None, help="identificador do lote")
     parser.add_argument("--verbose", action="store_true", help="log DEBUG no console")
     return parser
@@ -54,26 +56,21 @@ def construir_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = construir_parser().parse_args()
     configurar_logging(nivel_console="DEBUG" if args.verbose else None)
-    logger = obter_logger("run_apenas_recorte")
 
-    garantir_pastas(args.saida, settings.PASTA_FALHAS, settings.PASTA_LOGS)
-
-    inicio = time.perf_counter()
-    sumario = SumarioLote(lote_id=args.lote_id or novo_lote_id())
-    try:
-        etapa_recorte(sumario, args.entrada, args.saida,
-                      num_workers=args.workers, formato=args.formato)
-        sumario.sucesso = sumario.recortadas_ok > 0
-    except Exception as exc:
-        logger.exception("Recorte abortado: %s", exc)
-        sumario.falhas.append({"arquivo": None, "etapa": "recorte",
-                               "motivo": f"{type(exc).__name__}: {exc}"})
-
-    sumario.duracao_seg = time.perf_counter() - inicio
-    sumario.memoria_pico_mb = medir_memoria_mb()
-    for linha in sumario.linhas_relatorio():
-        logger.info(linha)
-    return 0 if sumario.sucesso else 1
+    sumario = executar_processamento(OpcoesProcessamento(
+        modo=settings.MODO_RECORTE,
+        pasta_entrada=args.entrada,
+        pasta_recortadas=args.saida,
+        lote_id=args.lote_id,
+        workers=args.workers,
+        formato=args.formato,
+        limite=args.limite,
+        pular_existentes=args.pular_existentes,
+        limpar_saida=args.limpar_saida,
+    ))
+    if not sumario.sucesso:
+        return 1
+    return 0 if sumario.total_falhas == 0 else 2
 
 
 if __name__ == "__main__":

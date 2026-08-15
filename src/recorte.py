@@ -40,6 +40,7 @@ __all__ = [
     "recortar_em_resolucao_cheia",
     "salvar_recortada",
     "processar_foto",
+    "processar_item",
 ]
 
 
@@ -242,9 +243,23 @@ def processar_foto(
     span_h_inicial_frac: float | None = None,
     span_minimo_frac: float | None = None,
     dilatar: bool | None = None,
+    nome_saida: str | None = None,
+    pular_existentes: bool | None = None,
+    mover_falhas: bool = True,
 ) -> dict:
     """
     Recorta UMA foto e grava o quadrante em pasta_saida.
+
+    nome_saida       nome do arquivo de saida SEM extensao. E por aqui que a
+                     renomeacao acontece quando ela nao materializa a pasta
+                     02_renomeadas: o quadrante ja nasce como VARD0000001.png
+                     (ou a1.png), sem copiar o lote inteiro antes.
+    pular_existentes se o quadrante de destino ja existe, nao reprocessa -
+                     retomar um lote interrompido custa so o que faltava.
+    mover_falhas     se a foto problematica deve ser MOVIDA para _falhas. O
+                     pipeline so liga isso quando esta lendo de uma pasta
+                     intermediaria (02_renomeadas): arquivo original de
+                     usuario nao e movido de lugar, apenas registrado.
 
     Roda dentro de um worker: nunca levanta excecao para fora - qualquer
     problema volta no campo 'erro' do dicionario de resultado, para que uma
@@ -254,6 +269,11 @@ def processar_foto(
     caminho_entrada = Path(caminho_entrada)
     pasta_saida = Path(pasta_saida or settings.PASTA_RECORTADAS)
     formato = formato or settings.RECORTE_FORMATO_SAIDA
+    pular_existentes = (settings.RECORTE_PULAR_EXISTENTES
+                        if pular_existentes is None else pular_existentes)
+    caminho_saida = pasta_saida / (
+        f"{nome_saida or caminho_entrada.stem}{extensao_do_formato(formato)}"
+    )
 
     resultado = {
         "arquivo": caminho_entrada.name,
@@ -261,12 +281,20 @@ def processar_foto(
         "saida": None,
         "sucesso": False,
         "deteccao_ok": False,
+        "pulado": False,
         "erro": None,
         "info": None,
         "duracao_seg": 0.0,
     }
 
     try:
+        if pular_existentes and caminho_saida.exists():
+            resultado["saida"] = str(caminho_saida)
+            resultado["sucesso"] = True
+            resultado["pulado"] = True
+            logger.debug("%s: quadrante ja existia, pulado.", caminho_saida.name)
+            return resultado
+
         pasta_saida.mkdir(parents=True, exist_ok=True)
 
         recortada, info = recortar_em_resolucao_cheia(
@@ -287,7 +315,7 @@ def processar_foto(
         if recortada is None:
             resultado["erro"] = "Imagem ilegivel (cv2.imread retornou None)"
             registrar_falha(caminho_entrada, "recorte", resultado["erro"],
-                            lote_id=lote_id, mover_arquivo=True)
+                            lote_id=lote_id, mover_arquivo=mover_falhas)
             return resultado
 
         resultado["info"] = info
@@ -299,21 +327,21 @@ def processar_foto(
                 f"(picos verticais encontrados: {len(info.get('picos_v', []))})"
             )
             if settings.RECORTE_FALHA_DETECCAO_E_ERRO:
-                # Modo estrito: nao gera o quadrante; o stitching usara o
-                # placeholder amarelo naquela celula.
+                # Modo estrito: nao gera o quadrante e manda a foto para
+                # _falhas, para conferencia manual.
                 resultado["erro"] = motivo
                 registrar_falha(caminho_entrada, "recorte", motivo, info,
-                                lote_id=lote_id, mover_arquivo=True)
+                                lote_id=lote_id, mover_arquivo=mover_falhas)
                 return resultado
             # Comportamento validado no Colab: devolve a imagem CHEIA.
             logger.warning(
                 "%s: %s - salvando a imagem CHEIA sem recorte.",
                 caminho_entrada.name, motivo,
             )
-            registrar_falha(caminho_entrada, "recorte_sem_deteccao", motivo, info,
-                            lote_id=lote_id, mover_arquivo=False)
+            if settings.RECORTE_REGISTRAR_JSON_SEM_DETECCAO:
+                registrar_falha(caminho_entrada, "recorte_sem_deteccao", motivo,
+                                info, lote_id=lote_id, mover_arquivo=False)
 
-        caminho_saida = pasta_saida / f"{caminho_entrada.stem}{extensao_do_formato(formato)}"
         salvar_recortada(recortada, str(caminho_saida), formato=formato)
 
         resultado["saida"] = str(caminho_saida)
@@ -327,9 +355,25 @@ def processar_foto(
         resultado["erro"] = f"{type(exc).__name__}: {exc}"
         logger.exception("Erro ao recortar %s", caminho_entrada.name)
         registrar_falha(caminho_entrada, "recorte", resultado["erro"],
-                        lote_id=lote_id, mover_arquivo=True)
+                        lote_id=lote_id, mover_arquivo=mover_falhas)
     finally:
         resultado["duracao_seg"] = time.perf_counter() - inicio
-        gc.collect()
+        if not resultado["pulado"]:
+            gc.collect()
 
     return resultado
+
+
+def processar_item(item, **kwargs) -> dict:
+    """
+    Adaptador para a fila de paralelismo.
+
+    Aceita tanto um caminho solto quanto a tupla (caminho, nome_de_saida)
+    produzida pelo plano de nomeacao. Precisa ser uma funcao de modulo para
+    ser picklavel pelo ProcessPoolExecutor no Windows.
+    """
+    if isinstance(item, (tuple, list)):
+        caminho, nome_saida = (list(item) + [None])[:2]
+    else:
+        caminho, nome_saida = item, None
+    return processar_foto(caminho, nome_saida=nome_saida, **kwargs)

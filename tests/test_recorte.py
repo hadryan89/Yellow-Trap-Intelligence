@@ -21,7 +21,12 @@ import pytest
 
 from config import settings
 from src import recorte
-from src.recorte import detectar_crop_box, processar_foto, recortar_em_resolucao_cheia
+from src.recorte import (
+    detectar_crop_box,
+    processar_foto,
+    processar_item,
+    recortar_em_resolucao_cheia,
+)
 from tests.fixtures.gerar_fixtures import (
     ALTURA_VALIDA,
     CROP_ESPERADO_X,
@@ -246,7 +251,7 @@ def test_modo_estrito_move_para_falhas(foto_sem_grade, pastas_isoladas,
                                        monkeypatch, tmp_path):
     """
     Com RECORTE_FALHA_DETECCAO_E_ERRO=True o quadrante nao e gerado e a foto
-    vai para _falhas (o stitching preenche a celula com o placeholder).
+    vai para _falhas, para conferencia manual.
     """
     monkeypatch.setattr(settings, "RECORTE_FALHA_DETECCAO_E_ERRO", True)
     monkeypatch.setattr(settings, "FALHAS_COPIAR_EM_VEZ_DE_MOVER", False)
@@ -262,6 +267,49 @@ def test_modo_estrito_move_para_falhas(foto_sem_grade, pastas_isoladas,
     assert not copia.exists(), "no modo estrito a foto e movida para _falhas"
     assert (pastas_isoladas["PASTA_FALHAS"] / "LOTE_ESTRITO"
             / "copia_sem_grade.png").exists()
+
+
+def test_nome_saida_renomeia_sem_copiar_a_origem(foto_valida, pastas_isoladas):
+    """
+    O nome novo aplicado direto na saida do recorte: e assim que o modo
+    sequencial renomeia milhares de fotos sem duplicar o lote em disco.
+    """
+    saida = pastas_isoladas["PASTA_RECORTADAS"]
+    resultado = processar_foto(str(foto_valida), pasta_saida=saida,
+                               formato="png", nome_saida="VARD0000042")
+
+    assert resultado["sucesso"] is True
+    assert resultado["saida"].endswith("VARD0000042.png")
+    assert (saida / "VARD0000042.png").exists()
+    assert not (saida / "foto_grade_valida.png").exists()
+
+    # O pixel entregue e o mesmo, so o nome mudou.
+    esperado, _ = recortar_em_resolucao_cheia(str(foto_valida))
+    assert np.array_equal(cv2.imread(str(saida / "VARD0000042.png")), esperado)
+
+
+def test_pular_existentes_nao_reprocessa(foto_valida, pastas_isoladas):
+    """Retomada: o quadrante ja existe, entao a foto nem chega a ser lida."""
+    saida = pastas_isoladas["PASTA_RECORTADAS"]
+    processar_foto(str(foto_valida), pasta_saida=saida, formato="png")
+    carimbo = (saida / "foto_grade_valida.png").stat().st_mtime_ns
+
+    resultado = processar_foto(str(foto_valida), pasta_saida=saida,
+                               formato="png", pular_existentes=True)
+
+    assert resultado["pulado"] is True
+    assert resultado["sucesso"] is True
+    assert (saida / "foto_grade_valida.png").stat().st_mtime_ns == carimbo
+
+
+def test_processar_item_desempacota_o_par(foto_valida, pastas_isoladas):
+    saida = pastas_isoladas["PASTA_RECORTADAS"]
+
+    resultado = processar_item((str(foto_valida), "VARD0000007"),
+                               pasta_saida=saida, formato="png")
+
+    assert resultado["sucesso"] is True
+    assert (saida / "VARD0000007.png").exists()
 
 
 def test_worker_nunca_levanta_excecao(tmp_path, pastas_isoladas):

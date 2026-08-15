@@ -21,7 +21,7 @@ import numpy as np
 
 PASTA_FIXTURES = Path(__file__).resolve().parent
 
-# Fundo amarelo da placa, em BGR (mesmo tom do placeholder do stitching).
+# Fundo amarelo da placa, em BGR.
 COR_PLACA = (40, 230, 250)
 COR_LINHA = (18, 18, 18)
 COR_PRAGA = (30, 40, 35)
@@ -80,21 +80,9 @@ def gerar_foto_sem_grade() -> np.ndarray:
     return img
 
 
-def gerar_quadrante_pequeno() -> np.ndarray:
-    """Quadrante minusculo usado nos testes de stitching a partir de arquivo."""
-    img = _placa_vazia(60, 40)
-    img[0, :] = COR_LINHA
-    img[-1, :] = COR_LINHA
-    img[:, 0] = COR_LINHA
-    img[:, -1] = COR_LINHA
-    _pragas(img, [(30, 20)], raio=4)
-    return img
-
-
 FIXTURES = {
     "foto_grade_valida.png": gerar_foto_grade_valida,
     "foto_sem_grade.png": gerar_foto_sem_grade,
-    "quadrante_pequeno.png": gerar_quadrante_pequeno,
 }
 
 

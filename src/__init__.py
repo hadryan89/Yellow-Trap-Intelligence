@@ -3,14 +3,17 @@ YellowTrap Pipeline - processamento de imagens de armadilhas amarelas.
 
 Grupo Progresso / Setor de Inovacao.
 
+O pipeline tem duas etapas e termina no recorte dos quadrantes.
+
 Modulos:
-    renomeacao  - Protocolo 1: renomeia para o grid a1..d10 com conferencia MD5
-    recorte     - Protocolo 2: recorta o quadrante central (deteccao de grade)
-    stitching   - Protocolo 3: monta a placa em layout horizontal 4 x 10
-    exportacao  - salvamento em multiplos formatos/resolucoes
-    paralelismo - wrapper de ProcessPoolExecutor
-    pipeline    - orquestracao das 3 etapas
-    utils       - logging, medicao de recursos, registro de falhas
+    opcoes      - OpcoesProcessamento: o contrato de entrada de uma execucao
+    renomeacao  - Etapa 1: plano de nomes (grid a1..d10 ou VARD0000001) e sua
+                  materializacao (virtual / hardlink / copiar+MD5 / mover)
+    recorte     - Etapa 2: recorta o quadrante central (deteccao de grade)
+    exportacao  - gravacao dos quadrantes (PNG / TIFF / JPEG)
+    paralelismo - wrapper de ProcessPoolExecutor com submissao em janela
+    pipeline    - orquestracao das duas etapas
+    utils       - logging, medicao de recursos, registro de falhas, sumario
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

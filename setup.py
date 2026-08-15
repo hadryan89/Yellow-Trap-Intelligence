@@ -21,9 +21,9 @@ REQUISITOS = [
 
 setup(
     name="yellowtrap-pipeline",
-    version="1.0.0",
+    version="2.0.0",
     description="Pipeline de processamento de imagens de armadilhas YellowTrap "
-                "(recorte de quadrantes + stitching da placa)",
+                "(nomeacao + recorte dos quadrantes)",
     long_description=LEIAME,
     long_description_content_type="text/markdown",
     author="Setor de Inovacao - Grupo Progresso",
@@ -32,7 +32,8 @@ setup(
     install_requires=REQUISITOS,
     entry_points={
         "console_scripts": [
-            "yellowtrap-pipeline=scripts.run_pipeline_completo:main",
+            "yellowtrap-pipeline=scripts.run_pipeline:main",
+            "yellowtrap-recorte=scripts.run_apenas_recorte:main",
             "yellowtrap-watcher=scripts.watcher:main",
         ],
     },

@@ -25,7 +25,6 @@ DEPENDENCIAS = [
     ("tqdm", "tqdm", True),
     ("watchdog", "watchdog", False),
     ("colorlog", "colorlog", False),
-    ("matplotlib", "matplotlib", False),
     ("pytest", "pytest", False),
 ]
 
@@ -92,8 +91,8 @@ def main() -> int:
         "RECORTE_SPAN_H_INICIAL_FRAC": 0.5,
         "RECORTE_SPAN_MINIMO_FRAC": 0.15,
         "RECORTE_DILATAR": True,
-        "STITCHING_ESCALA_CARREGAMENTO": 1.0,
-        "STITCHING_COR_PLACEHOLDER": (40, 230, 250),
+        "RECORTE_LIMIAR_FRAC": 0.25,
+        "RECORTE_MIN_DIST": 30,
         "QUANTIDADE_ESPERADA": 40,
     }
     divergentes = []
@@ -121,9 +120,11 @@ def main() -> int:
 
     print(f"{VERDE}Ambiente pronto.{RESET}\n")
     print("Proximos passos:")
-    print(f"  1. Coloque as {settings.QUANTIDADE_ESPERADA} fotos em "
-          f"{settings.PASTA_ENTRADA}")
-    print("  2. Rode:  python scripts/run_pipeline_completo.py")
+    print(f"  1. Coloque as fotos em {settings.PASTA_ENTRADA}")
+    print(f"  2. Lote de {settings.QUANTIDADE_ESPERADA} fotos no grid da placa:")
+    print("       python scripts/run_pipeline.py --modo grid")
+    print("     Muitas fotos, so renomear e recortar:")
+    print("       python scripts/run_pipeline.py --modo sequencial")
     print("  3. Ou deixe o watcher ligado:  python scripts/watcher.py")
     return 0
 

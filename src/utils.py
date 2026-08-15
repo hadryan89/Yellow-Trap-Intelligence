@@ -149,30 +149,87 @@ def garantir_pastas(*pastas: Path) -> None:
         Path(pasta).mkdir(parents=True, exist_ok=True)
 
 
-def listar_imagens(pasta: Path, extensoes: Iterable[str] | None = None) -> list[Path]:
-    """Lista arquivos de imagem de uma pasta, em ordem natural."""
+def listar_imagens(pasta: Path, extensoes: Iterable[str] | None = None,
+                   limite: int | None = None,
+                   ordenar: bool = True) -> list[Path]:
+    """
+    Lista arquivos de imagem de uma pasta, em ordem natural.
+
+    Usa os.scandir: em pastas com milhares de arquivos ele evita uma chamada
+    de stat() por item (o tipo vem junto da leitura do diretorio), o que faz
+    diferenca real no Windows.
+
+    limite: devolve apenas os N primeiros (depois da ordenacao).
+    """
     pasta = Path(pasta)
     if not pasta.exists():
         return []
     validas = {e.lower() for e in (extensoes or settings.EXTENSOES_IMAGEM)}
-    arquivos = [a for a in pasta.iterdir() if a.is_file() and a.suffix.lower() in validas]
-    return sorted(arquivos, key=lambda p: natural_key(p.name))
+
+    arquivos: list[Path] = []
+    with os.scandir(pasta) as entradas:
+        for entrada in entradas:
+            if os.path.splitext(entrada.name)[1].lower() not in validas:
+                continue
+            try:
+                if not entrada.is_file():
+                    continue
+            except OSError:  # arquivo sumiu no meio da varredura
+                continue
+            arquivos.append(Path(entrada.path))
+
+    if ordenar:
+        arquivos.sort(key=lambda p: natural_key(p.name))
+    if limite is not None and limite > 0:
+        return arquivos[:limite]
+    return arquivos
+
+
+def contar_imagens(pasta: Path, extensoes: Iterable[str] | None = None) -> int:
+    """Conta imagens sem materializar a lista de caminhos."""
+    pasta = Path(pasta)
+    if not pasta.exists():
+        return 0
+    validas = {e.lower() for e in (extensoes or settings.EXTENSOES_IMAGEM)}
+    total = 0
+    with os.scandir(pasta) as entradas:
+        for entrada in entradas:
+            if os.path.splitext(entrada.name)[1].lower() in validas:
+                try:
+                    if entrada.is_file():
+                        total += 1
+                except OSError:
+                    continue
+    return total
 
 
 def limpar_pasta(pasta: Path, apenas_arquivos: bool = True) -> int:
-    """Remove o conteudo de uma pasta. Retorna a quantidade removida."""
+    """
+    Remove o conteudo de uma pasta. Retorna a quantidade removida.
+
+    Um arquivo travado por outro processo nao interrompe a limpeza: o erro
+    vira DEBUG e a varredura continua.
+    """
     pasta = Path(pasta)
     if not pasta.exists():
         pasta.mkdir(parents=True, exist_ok=True)
         return 0
+
+    logger = obter_logger(__name__)
     removidos = 0
-    for item in pasta.iterdir():
-        if item.is_file():
-            item.unlink()
-            removidos += 1
-        elif not apenas_arquivos and item.is_dir():
-            shutil.rmtree(item)
-            removidos += 1
+    with os.scandir(pasta) as entradas:
+        itens = [(entrada.path, entrada.is_dir()) for entrada in entradas]
+    for caminho, e_pasta in itens:
+        try:
+            if e_pasta:
+                if not apenas_arquivos:
+                    shutil.rmtree(caminho)
+                    removidos += 1
+            else:
+                os.remove(caminho)
+                removidos += 1
+        except OSError as exc:
+            logger.debug("Nao foi possivel remover %s: %s", caminho, exc)
     return removidos
 
 
@@ -447,30 +504,82 @@ def _serializavel(valor: Any) -> Any:
 
 @dataclass
 class SumarioLote:
-    """Resultado consolidado de uma execucao do pipeline."""
+    """
+    Resultado consolidado de uma execucao do pipeline.
+
+    Escala: contadores sao inteiros e o detalhamento das falhas e limitado a
+    settings.SUMARIO_MAX_FALHAS_DETALHADAS entradas. Um lote de 2.000 fotos
+    que der errado inteiro produz um relatorio legivel, nao um JSON de
+    centenas de MB - e `falhas_total` continua exato.
+    """
 
     lote_id: str
+    modo: str = settings.MODO_PADRAO
     inicio: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     duracao_seg: float = 0.0
     total_entrada: int = 0
     renomeadas: int = 0
+    ignoradas: int = 0            # fora do teto do grid / do limite pedido
     recortadas_ok: int = 0
     recortadas_sem_deteccao: int = 0
+    recortadas_falha: int = 0
+    puladas: int = 0              # ja existiam na saida (retomada)
     falhas: list[dict[str, Any]] = field(default_factory=list)
-    quadrantes_no_stitching: int = 0
-    placeholders: int = 0
-    dimensao_placa: tuple[int, int] | None = None
-    arquivos_gerados: list[str] = field(default_factory=list)
+    falhas_total: int = 0
+    falhas_por_etapa: dict[str, int] = field(default_factory=dict)
     pasta_saida: str | None = None
     memoria_pico_mb: float | None = None
     sucesso: bool = False
+    # Snapshot das opcoes da execucao (inclui o `contexto` livre do chamador).
+    # Deixa o relatorio auto-explicativo: da para reproduzir o lote so com ele.
+    parametros: dict[str, Any] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # Registro de falhas
+    # ------------------------------------------------------------------
+
+    def adicionar_falha(self, arquivo: Any, etapa: str, motivo: Any) -> None:
+        """Contabiliza uma falha (o detalhe entra ate o teto configurado)."""
+        self.falhas_total += 1
+        self.falhas_por_etapa[etapa] = self.falhas_por_etapa.get(etapa, 0) + 1
+        if len(self.falhas) < settings.SUMARIO_MAX_FALHAS_DETALHADAS:
+            self.falhas.append({"arquivo": arquivo, "etapa": etapa,
+                                "motivo": motivo})
+
+    def estender_falhas(self, falhas: Iterable[dict[str, Any]]) -> None:
+        for falha in falhas:
+            self.adicionar_falha(falha.get("arquivo"), falha.get("etapa", "?"),
+                                 falha.get("motivo"))
 
     @property
     def total_falhas(self) -> int:
-        return len(self.falhas)
+        # max() protege quem ainda usa sumario.falhas.append() diretamente.
+        return max(self.falhas_total, len(self.falhas))
+
+    @property
+    def sem_falhas(self) -> bool:
+        """Lote perfeito: rodou ate o fim e nenhuma foto ficou pelo caminho."""
+        return self.sucesso and self.total_falhas == 0
+
+    @property
+    def total_processadas(self) -> int:
+        return self.recortadas_ok + self.recortadas_falha
+
+    @property
+    def fotos_por_segundo(self) -> float:
+        return self.total_processadas / self.duracao_seg if self.duracao_seg else 0.0
+
+    # ------------------------------------------------------------------
+    # Serializacao
+    # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return _serializavel(asdict(self))
+        dados = _serializavel(asdict(self))
+        dados["total_falhas"] = self.total_falhas
+        dados["sem_falhas"] = self.sem_falhas
+        dados["fotos_por_segundo"] = round(self.fotos_por_segundo, 3)
+        dados["falhas_omitidas"] = max(0, self.total_falhas - len(self.falhas))
+        return dados
 
     def salvar_json(self, caminho: Path) -> Path:
         caminho = Path(caminho)
@@ -484,32 +593,37 @@ class SumarioLote:
         """Texto do sumario final, uma linha por item."""
         linhas = [
             "=" * 68,
-            f"SUMARIO DO LOTE {self.lote_id}",
+            f"SUMARIO DO LOTE {self.lote_id}  (modo: {self.modo})",
             "=" * 68,
             f"  Fotos de entrada .............. {self.total_entrada}",
-            f"  Renomeadas (MD5 conferido) .... {self.renomeadas}",
+            f"  Nomeadas ...................... {self.renomeadas}",
+        ]
+        if self.ignoradas:
+            linhas.append(f"  Ignoradas (fora do lote) ...... {self.ignoradas}")
+        if self.puladas:
+            linhas.append(f"  Puladas (ja existiam) ......... {self.puladas}")
+        linhas += [
             f"  Recortadas com sucesso ........ {self.recortadas_ok}",
             f"  Recortadas SEM deteccao ....... {self.recortadas_sem_deteccao}",
             f"  Falhas ........................ {self.total_falhas}",
-            f"  Quadrantes no stitching ....... {self.quadrantes_no_stitching}",
-            f"  Celulas placeholder ........... {self.placeholders}",
         ]
-        if self.dimensao_placa:
-            linhas.append(
-                f"  Placa montada ................. {self.dimensao_placa[1]} x "
-                f"{self.dimensao_placa[0]} px (L x A)"
-            )
-        linhas.append(f"  Arquivos gerados .............. {len(self.arquivos_gerados)}")
         if self.pasta_saida:
             linhas.append(f"  Pasta de saida ................ {self.pasta_saida}")
         if self.memoria_pico_mb is not None:
             linhas.append(f"  Memoria (fim do lote) ......... {self.memoria_pico_mb:.0f} MB")
         linhas.append(f"  Tempo total ................... {formatar_duracao(self.duracao_seg)}")
+        if self.total_processadas:
+            linhas.append(
+                f"  Throughput .................... {self.fotos_por_segundo:.2f} foto/s"
+            )
         if self.falhas:
             linhas.append("-" * 68)
             linhas.append("  FALHAS:")
             for f in self.falhas:
                 linhas.append(f"    - [{f.get('etapa')}] {f.get('arquivo')}: {f.get('motivo')}")
+            omitidas = self.total_falhas - len(self.falhas)
+            if omitidas > 0:
+                linhas.append(f"    ... e mais {omitidas} falha(s) - veja data/_falhas/")
         linhas.append("=" * 68)
         return linhas
 

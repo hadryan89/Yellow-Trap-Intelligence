@@ -9,17 +9,25 @@ Como funciona
 3. Um arquivo so entra no lote depois de ficar com o tamanho estavel por
    WATCHER_CICLOS_ESTABILIDADE ciclos - evita processar foto pela metade
    enquanto a camera/cartao ainda esta copiando.
-4. Quando um grupo atinge QUANTIDADE_ESPERADA (40) fotos estaveis, o lote e
-   fechado: as fotos vao para 01_entrada_bruta/_lotes/<lote_id>/ e o pipeline
-   completo e disparado.
-5. Lote INCOMPLETO nao e processado: o watcher espera indefinidamente,
-   avisando por WARNING a cada WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG segundos
-   de inatividade quantas fotos ainda faltam.
+4. O criterio de FECHAMENTO do lote depende do modo:
+
+   * modo grid (--tamanho-lote N, default 40): o lote so fecha quando o
+     grupo atinge N fotos estaveis. Lote INCOMPLETO nunca e processado - o
+     watcher espera indefinidamente, avisando por WARNING a cada
+     WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG segundos quantas fotos faltam;
+   * modo sequencial (--tamanho-lote 0): nao existe "tamanho certo". O lote
+     fecha por QUIETUDE - passados WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG
+     segundos sem chegar arquivo novo, tudo o que estiver estavel e
+     processado, sejam 12 ou 12.000 fotos.
+
+5. Ao fechar, as fotos vao para 01_entrada_bruta/_lotes/<lote_id>/ e o
+   pipeline (nomeacao + recorte) e disparado.
 6. O estado vai para .watcher_state.json - reiniciar o watcher nao
    reprocessa nada.
 
 Uso:
     python scripts/watcher.py
+    python scripts/watcher.py --modo sequencial --tamanho-lote 0
     python scripts/watcher.py --uma-vez        # processa o que der e sai
     python scripts/watcher.py --tamanho-lote 20
     python scripts/watcher.py --resetar-estado
@@ -41,7 +49,9 @@ if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
 from config import settings  # noqa: E402
-from src.pipeline import executar_pipeline_completo, novo_lote_id  # noqa: E402
+from src.exportacao import FORMATOS_VALIDOS  # noqa: E402
+from src.opcoes import OpcoesProcessamento  # noqa: E402
+from src.pipeline import executar_processamento, novo_lote_id  # noqa: E402
 from src.utils import (  # noqa: E402
     configurar_logging,
     garantir_pastas,
@@ -219,27 +229,28 @@ def arquivar_lote(arquivos: list[Path], lote_id: str) -> Path:
 
 
 def processar_lote(arquivos: list[Path], estado: dict, caminho_estado: Path,
-                   num_workers: int | None, formato: str | None) -> bool:
-    """Isola o lote, roda o pipeline completo e atualiza o estado."""
+                   opcoes_base: OpcoesProcessamento) -> bool:
+    """Isola o lote, roda o pipeline e atualiza o estado."""
     lote_id = novo_lote_id()
     nomes = [c.name for c in arquivos]
     logger.info("=" * 68)
-    logger.info("LOTE COMPLETO detectado: %d foto(s) (%s ... %s)",
+    logger.info("LOTE FECHADO: %d foto(s) (%s ... %s)",
                 len(arquivos), nomes[0], nomes[-1])
 
     pasta_lote = arquivar_lote(arquivos, lote_id)
 
-    sumario = executar_pipeline_completo(
-        pasta_entrada=pasta_lote,
-        lote_id=lote_id,
-        num_workers=num_workers,
-        formato_recorte=formato,
-    )
+    sumario = executar_processamento(
+        opcoes_base.com(pasta_entrada=pasta_lote, lote_id=lote_id))
 
+    processado_em = datetime.now().isoformat(timespec="seconds")
     estado["lotes"][lote_id] = {
-        "arquivos": nomes,
+        # Em lotes de milhares de fotos a lista completa inflaria o estado:
+        # guardamos a contagem e as pontas, que e o que serve para auditoria.
+        "total_arquivos": len(nomes),
+        "primeiro": nomes[0],
+        "ultimo": nomes[-1],
         "pasta_lote": str(pasta_lote),
-        "processado_em": datetime.now().isoformat(timespec="seconds"),
+        "processado_em": processado_em,
         "sucesso": sumario.sucesso,
         "recortadas_ok": sumario.recortadas_ok,
         "falhas": sumario.total_falhas,
@@ -247,14 +258,28 @@ def processar_lote(arquivos: list[Path], estado: dict, caminho_estado: Path,
         "duracao_seg": round(sumario.duracao_seg, 2),
     }
     for nome in nomes:
-        estado["arquivos_processados"][nome] = {
-            "lote": lote_id,
-            "em": estado["lotes"][lote_id]["processado_em"],
-        }
+        estado["arquivos_processados"][nome] = {"lote": lote_id, "em": processado_em}
+    _podar_estado(estado)
     salvar_estado(caminho_estado, estado)
     logger.info("Estado atualizado: %d lote(s) processado(s) no total.",
                 len(estado["lotes"]))
     return sumario.sucesso
+
+
+def _podar_estado(estado: dict, maximo: int = 50_000) -> None:
+    """
+    Limita o historico de arquivos processados.
+
+    As fotos ja foram movidas para _lotes/<lote_id>/, entao o historico e
+    apenas uma rede de seguranca contra reprocessamento - nao pode crescer
+    indefinidamente e transformar a leitura do estado num gargalo.
+    """
+    processados = estado.get("arquivos_processados", {})
+    if len(processados) <= maximo:
+        return
+    ordenados = sorted(processados.items(), key=lambda par: par[1].get("em", ""))
+    estado["arquivos_processados"] = dict(ordenados[-maximo:])
+    logger.info("Historico de arquivos podado para os %d mais recentes.", maximo)
 
 
 def loop(args) -> int:
@@ -266,11 +291,22 @@ def loop(args) -> int:
 
     garantir_pastas(*settings.PASTAS_OBRIGATORIAS)
 
+    opcoes_base = OpcoesProcessamento(
+        modo=args.modo,
+        workers=args.workers,
+        formato=args.formato,
+        estrategia_renomeacao=args.estrategia,
+        continuar_numeracao=args.continuar,
+        pular_existentes=args.pular_existentes,
+    )
+
     relogio = _RelogioDeEventos()
     observador = iniciar_observador(settings.PASTA_ENTRADA, relogio)
     rastreador: dict[str, dict] = {}
     ultimo_aviso = 0.0
-    tamanho_lote = args.tamanho_lote
+    tamanho_lote = max(0, args.tamanho_lote)
+    # tamanho_lote == 0 -> o lote fecha por quietude, nao por contagem.
+    por_quietude = tamanho_lote == 0
     ciclos = 0
     # Em --uma-vez ainda e preciso rodar os ciclos da checagem de
     # estabilidade, senao nenhum arquivo chega a ser considerado pronto.
@@ -279,10 +315,13 @@ def loop(args) -> int:
     logger.info("=" * 68)
     logger.info("WATCHER ATIVO")
     logger.info("  Pasta vigiada ....... %s", settings.PASTA_ENTRADA)
-    logger.info("  Tamanho do lote ..... %d foto(s)", tamanho_lote)
+    logger.info("  Modo ................ %s", args.modo)
+    if por_quietude:
+        logger.info("  Fechamento do lote .. por quietude (%ds sem arquivo novo)",
+                    settings.WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG)
+    else:
+        logger.info("  Tamanho do lote ..... %d foto(s)", tamanho_lote)
     logger.info("  Poll ................ %ds", settings.WATCHER_INTERVALO_POLL_SEG)
-    logger.info("  Aviso de incompleto . a cada %ds de inatividade",
-                settings.WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG)
     logger.info("  Lotes ja no historico %d", len(estado["lotes"]))
     logger.info("  Ctrl+C para encerrar.")
     logger.info("=" * 68)
@@ -296,25 +335,37 @@ def loop(args) -> int:
                 if caminho.name not in processados
             ]
             prontos = atualizar_estabilidade(pendentes, rastreador)
-            grupos = agrupar_por_prefixo(prontos)
+            # Sem tamanho fixo o agrupamento por prefixo so atrapalharia: um
+            # envio de milhares de fotos com nomes variados e UM lote.
+            grupos = ({"todos": prontos} if prontos else {}) if por_quietude \
+                else agrupar_por_prefixo(prontos)
+            inativo = relogio.inativo_ha()
+            quieto = inativo >= settings.WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG
 
             houve_trabalho = False
             for prefixo, arquivos in sorted(grupos.items()):
-                if len(arquivos) >= tamanho_lote:
+                if por_quietude:
+                    # Sem tamanho fixo: fecha quando parou de chegar arquivo
+                    # (ou imediatamente, no --uma-vez).
+                    if not (quieto or args.uma_vez):
+                        continue
+                    lote = arquivos
+                elif len(arquivos) >= tamanho_lote:
                     lote = arquivos[:tamanho_lote]
-                    try:
-                        processar_lote(lote, estado, caminho_estado,
-                                       args.workers, args.formato)
-                    except Exception as exc:
-                        logger.exception("Erro ao processar o lote '%s': %s",
-                                         prefixo, exc)
-                    houve_trabalho = True
-                    relogio.marcar()
+                else:
+                    continue
 
-            if not houve_trabalho:
-                inativo = relogio.inativo_ha()
-                if (pendentes
-                        and inativo >= settings.WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG
+                try:
+                    processar_lote(lote, estado, caminho_estado, opcoes_base)
+                except Exception as exc:
+                    logger.exception("Erro ao processar o lote '%s': %s",
+                                     prefixo, exc)
+                houve_trabalho = True
+                relogio.marcar()
+                rastreador.clear()
+
+            if not houve_trabalho and not por_quietude:
+                if (pendentes and quieto
                         and time.monotonic() - ultimo_aviso
                         >= settings.WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG):
                     for prefixo, arquivos in sorted(agrupar_por_prefixo(pendentes).items()):
@@ -330,7 +381,7 @@ def loop(args) -> int:
             if args.uma_vez and (houve_trabalho or ciclos >= ciclos_maximos):
                 if not houve_trabalho:
                     logger.info(
-                        "--uma-vez: nenhum lote completo apos %d ciclo(s) de "
+                        "--uma-vez: nenhum lote fechado apos %d ciclo(s) de "
                         "verificacao. Encerrando sem processar.", ciclos,
                     )
                 break
@@ -352,14 +403,28 @@ def construir_parser() -> argparse.ArgumentParser:
         description="YellowTrap Pipeline - modo watcher (vigia a pasta de entrada)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
+                        default=settings.MODO_PADRAO,
+                        help="grid = a1..d10 | sequencial = VARD0000001 | "
+                             "recorte = mantem o nome de origem")
     parser.add_argument("--tamanho-lote", type=int,
                         default=settings.QUANTIDADE_ESPERADA,
-                        help="quantas fotos formam um lote")
+                        help="quantas fotos formam um lote; 0 = fecha o lote "
+                             "por quietude (indicado com --modo sequencial)")
     parser.add_argument("--workers", type=int, default=None,
                         help="processos paralelos no recorte (default: CPUs - 1)")
-    parser.add_argument("--formato", choices=["png", "tiff", "jpg_max"],
-                        default=settings.RECORTE_FORMATO_SAIDA,
+    parser.add_argument("--formato", choices=list(FORMATOS_VALIDOS),
+                        default=None,
                         help="formato dos quadrantes recortados")
+    parser.add_argument("--materializar", dest="estrategia",
+                        choices=list(settings.ESTRATEGIAS_VALIDAS), default=None,
+                        help="como gravar 02_renomeadas (virtual = nao grava)")
+    parser.add_argument("--continuar", dest="continuar", action="store_true",
+                        default=None,
+                        help="modo sequencial: continua a numeracao de onde parou")
+    parser.add_argument("--retomar", dest="pular_existentes", action="store_true",
+                        default=None,
+                        help="pula fotos cujo quadrante ja existe na saida")
     parser.add_argument("--uma-vez", action="store_true",
                         help="roda um unico ciclo e encerra (util em cron/n8n)")
     parser.add_argument("--forcar", action="store_true",
