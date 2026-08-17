@@ -37,6 +37,7 @@ que trava isso).
 - [Preservação de qualidade](#preservação-de-qualidade)
 - [Troubleshooting](#troubleshooting)
 - [Integração com n8n / Railway](#integração-com-n8n--railway)
+- [Mudanças recentes](#mudanças-recentes)
 
 ---
 
@@ -45,34 +46,44 @@ que trava isso).
 ```
 data/01_entrada_bruta/     DSC0001.JPG ... DSC0040.JPG   (nomes da câmera)
         │
-        │  Etapa 1 — nomeação: monta o de-para (a1..d10 ou VARD0000001...)
-        │            e SÓ materializa 02_renomeadas se você pedir
-        ▼
-data/02_renomeadas/        (opcional — ver "materialização" abaixo)
+        │  Etapa 1 — nomeação: monta o de-para (a1..d10 ou VARD0, VARD1...)
+        │            SEM escrever nada em disco
         │
         │  Etapa 2 — recorte do quadrante central (PARALELO, N processos)
+        │            grava UM arquivo por foto, já com o nome final
         ▼
-data/03_recortadas/        a1.png … d10.png   ou   VARD0000001.png …
+data/03_recortadas/        a1.png … d10.png   ou   VARD0.png, VARD1.png …
         │
         └─ data/_relatorios/<lote_id>/sumario.json
+
+data/02_renomeadas/        vazia por padrão (ver "materialização" abaixo)
 ```
 
 **A montagem da placa (stitching) foi removida.** O pipeline termina nos
 quadrantes recortados.
 
-### Materialização: por que 02_renomeadas é opcional
+### 1 foto de entrada = 1 arquivo de saída
 
-Renomear não exige escrever um segundo lote em disco. O recorte **sempre** grava
-um arquivo novo, então o nome novo pode ser aplicado direto nele — o quadrante
-já nasce como `VARD0000001.png`. É isso que a estratégia `virtual` faz, e é o
-que torna viável processar milhares de fotos:
+O lote **não** é replicado pelas pastas do pipeline. Jogue 30 fotos em
+`01_entrada_bruta/` e o resultado são 30 quadrantes em `03_recortadas/` — mais
+nada. Renomear não exige escrever um segundo lote em disco: o recorte **sempre**
+grava um arquivo novo, então o nome novo é aplicado direto nele e o quadrante já
+nasce como `VARD0.png`. É isso que a estratégia `virtual` faz, e ela é o
+**default de todos os modos**.
+
+Se quiser mesmo ver as fotos renomeadas em `02_renomeadas/`, peça
+explicitamente com `--materializar` — e saiba o que cada opção custa:
 
 | Estratégia | O que faz | Custo em disco | Quando usar |
 |---|---|---|---|
-| `virtual` | não escreve nada; o nome vai direto no recorte | zero | **default** do modo sequencial; lotes grandes |
+| `virtual` | não escreve nada; o nome vai direto no recorte | zero | **default de todos os modos** |
 | `hardlink` | cria um link em `02_renomeadas` | zero (mesmo volume) | quer ver as renomeadas sem duplicar |
-| `copiar` | cópia byte-a-byte + conferência MD5 | 1× o lote | **default** do modo grid; rastreabilidade |
+| `copiar` | cópia byte-a-byte + conferência MD5 | **1× o lote inteiro** | auditoria/rastreabilidade |
 | `mover` | move o arquivo (esvazia a entrada) | zero | pasta de entrada é descartável |
+
+Qualquer estratégia que duplique o lote aparece como aviso no log e como a linha
+`Copias em 02_renomeadas` no sumário final — se ela estiver zerada, nada foi
+replicado.
 
 ---
 
@@ -83,15 +94,15 @@ arquivo de saída** — o recorte é bit-a-bit o mesmo.
 
 | Modo | Nomes gerados | Limite de fotos | Materialização default |
 |---|---|---|---|
-| `grid` | `a1, a2 … d10` (posição na placa) | 40 (as posições do grid) | `copiar` + MD5 |
-| `sequencial` | `VARD0000001, VARD0000002 …` | nenhum | `virtual` |
+| `grid` | `a1, a2 … d10` (posição na placa) | 40 (as posições do grid) | `virtual` |
+| `sequencial` | `VARD0, VARD1, VARD2 …` | nenhum | `virtual` |
 | `recorte` | preserva o nome de origem | nenhum | `virtual` |
 
 ```powershell
 # O padrão de sempre: 40 fotos viram a1..d10 recortadas
 python scripts/run_pipeline.py --modo grid
 
-# Só renomear (VARD0000001) e recortar — para lotes de qualquer tamanho
+# Só renomear (VARD0, VARD1…) e recortar — para lotes de qualquer tamanho
 python scripts/run_pipeline.py --modo sequencial
 
 # Só recortar, mantendo os nomes
@@ -173,7 +184,7 @@ Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
 |---|---|
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
 | `python scripts/run_pipeline.py --modo grid` | padrão histórico: a1..d10 + recorte |
-| `python scripts/run_pipeline.py --modo sequencial` | VARD0000001 + recorte, sem limite de quantidade |
+| `python scripts/run_pipeline.py --modo sequencial` | VARD0, VARD1… + recorte, sem limite de quantidade |
 | `python scripts/run_pipeline.py --simular` | mostra o plano de nomes sem gravar nada |
 | `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
 | `python scripts/watcher.py` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
@@ -223,6 +234,9 @@ python scripts/run_pipeline.py --modo sequencial --simular
 python scripts/run_pipeline.py --modo sequencial --limite 20
 
 # Prefixo/dígitos próprios: LAV000001
+python scripts/run_pipeline.py --modo sequencial --prefixo LAV
+
+# Contador com largura fixa (LAV000001) em vez de LAV1
 python scripts/run_pipeline.py --modo sequencial --prefixo LAV --digitos 6
 
 # Quadrantes em TIFF LZW em vez de PNG
@@ -302,7 +316,7 @@ from src.renomeacao import planejar_nomeacao
 from src.utils import listar_imagens
 
 plano = planejar_nomeacao(listar_imagens("D:/uploads/job_42"), modo="sequencial")
-plano.mapeamento   # [('DSC0001.JPG', 'VARD0000001.jpg'), ...]
+plano.mapeamento   # [('DSC0001.JPG', 'VARD0.jpg'), ...]
 ```
 
 Outras entradas úteis: `src.pipeline.processar_pasta(pasta, modo=...)`,
@@ -374,7 +388,7 @@ yellowtrap_pipeline/
 │   └── utils.py                 logging, memória, falhas, sumário
 ├── data/
 │   ├── 01_entrada_bruta/        fotos originais (+ _lotes/ com o histórico)
-│   ├── 02_renomeadas/           só é preenchida se a estratégia pedir
+│   ├── 02_renomeadas/           vazia por padrão (só com `--materializar`)
 │   ├── 03_recortadas/           quadrantes limpos  ← entrega final
 │   ├── _relatorios/             <lote_id>/sumario.json
 │   ├── _falhas/                 fotos problemáticas + JSON do motivo
@@ -432,9 +446,11 @@ qualquer um desses valores for alterado** — de propósito.
 | Parâmetro | Default | O que faz |
 |---|---|---|
 | `MODO_PADRAO` | `'grid'` | modo usado quando ninguém passa `--modo` |
-| `SEQUENCIAL_PREFIXO` / `_DIGITOS` | `'VARD'` / `7` | formato do nome sequencial |
+| `SEQUENCIAL_PREFIXO` | `'VARD'` | prefixo do nome sequencial |
+| `SEQUENCIAL_DIGITOS` | `1` | largura **mínima** do contador: `1` → `VARD0, VARD1, VARD10`; `7` → `VARD0000000…` |
+| `SEQUENCIAL_INICIO` | `0` | número da primeira foto do lote |
 | `SEQUENCIAL_CONTINUAR_NUMERACAO` | `False` | continua a numeração do acervo existente |
-| `RENOMEACAO_ESTRATEGIA` | por modo | `virtual` / `hardlink` / `copiar` / `mover` |
+| `RENOMEACAO_ESTRATEGIA` | `virtual` em todos os modos | `virtual` / `hardlink` / `copiar` / `mover` — só `virtual` e `mover` não duplicam o lote |
 | `RENOMEACAO_VERIFICAR_MD5` | `True` | conferência da cópia (só afeta `copiar`) |
 | `RECORTE_FORMATO_SAIDA` | `'png'` | `png`, `tiff`, `jpg_max` |
 | `RECORTE_PULAR_EXISTENTES` | `False` | retomada automática |
@@ -561,7 +577,7 @@ python scripts/run_pipeline.py --modo sequencial --retomar
 ## Testes
 
 ```powershell
-python -m pytest                  # suíte completa (89 testes)
+python -m pytest                  # suíte completa (95 testes)
 python -m pytest -m "not lento"   # pula os testes de integração pesados
 python -m pytest tests/test_recorte.py -v
 ```
@@ -585,6 +601,9 @@ primeira execução — nada de binário no repositório.
   da numeração;
 - **estratégias de materialização**: `virtual` não escreve nada, `mover` esvazia
   a origem, cópia em paralelo não embaralha a ordem;
+- **nenhuma duplicação do lote**: 30 fotos de entrada produzem 30 arquivos de
+  saída nos três modos (`test_n_fotos_entram_n_arquivos_saem`) e nenhum modo
+  materializa `02_renomeadas` por padrão;
 - **robustez**: foto corrompida não derruba o lote, arquivo sumido no meio da
   cópia não derruba a etapa, ordem dos resultados preservada no paralelismo,
   janela de submissão não perde item, retomada não reprocessa.
@@ -633,7 +652,7 @@ Você está no modo `grid`, que tem exatamente 40 posições. Rode com
 `--modo sequencial`.
 
 **Nomes colidindo entre envios**
-No modo sequencial, cada execução recomeça em `VARD0000001` e sobrescreve o
+No modo sequencial, cada execução recomeça em `VARD0` e sobrescreve o
 envio anterior. Use `--continuar` (ou uma `--saida` por job).
 
 **`MemoryError` / o processo morre no meio**
@@ -690,6 +709,69 @@ subprocesso.
 **Próximo passo natural** — `data/03_recortadas/` é exatamente a entrada que o
 modelo de deep learning espera: quadrantes limpos, com nome estável e
 rastreável pelo `sumario.json`.
+
+---
+
+## Mudanças recentes
+
+### O lote deixou de ser replicado em disco
+
+**Antes:** o modo `grid` (o padrão) vinha configurado com a estratégia `copiar`.
+Antes de recortar, ele gravava uma cópia byte-a-byte de cada foto em
+`02_renomeadas/`. Com o original em `01_entrada_bruta/` e o quadrante em
+`03_recortadas/`, o mesmo lote passava a existir **três vezes** em disco — 30
+fotos viravam 90 arquivos.
+
+**Agora:** todos os modos usam a estratégia `virtual`. O nome novo é carimbado
+direto no arquivo do recorte, que já nasce como `VARD0.png` / `a1.png`. **Uma
+foto de entrada gera exatamente um arquivo de saída.**
+
+| | Antes | Agora |
+|---|---|---|
+| `01_entrada_bruta/` | 30 fotos (suas originais) | 30 fotos (suas originais) |
+| `02_renomeadas/` | **30 cópias** | vazia |
+| `03_recortadas/` | 30 quadrantes | 30 quadrantes |
+
+A renomeação **não** foi removida — só mudou onde é gravada. Ela continua
+acontecendo nos três modos, agora sem o arquivo intermediário.
+
+Conferido com 30 fotos reais de produção: `402 MB` de entrada → `313 MB` de
+saída, `02_renomeadas/` vazia, originais intactas.
+
+Se você precisar mesmo das fotos renomeadas em disco (auditoria, conferência
+MD5), peça explicitamente — mas saiba que isso volta a duplicar o lote:
+
+```powershell
+python scripts/run_pipeline.py --modo grid --materializar copiar
+```
+
+Nesse caso o log emite um `WARNING` dizendo quantas cópias extras serão criadas,
+e o sumário final ganha a linha `Copias em 02_renomeadas`. Se essa linha não
+aparecer, nada foi replicado.
+
+### Numeração sequencial sem zeros à esquerda
+
+**Antes:** `VARD0000001, VARD0000002, VARD0000003 …`
+**Agora:** `VARD0, VARD1, VARD2, VARD3 …`
+
+```python
+SEQUENCIAL_DIGITOS = 1   # era 7  → largura mínima do contador, sem zeros
+SEQUENCIAL_INICIO  = 0   # era 1  → a primeira foto do lote vira VARD0
+```
+
+Dois pontos que valem saber:
+
+- **o número nunca é truncado.** `digitos` é a largura *mínima*, não um limite:
+  depois de `VARD9` o nome cresce sozinho para `VARD10`, `VARD100`, `VARD1000`.
+  Continua sem teto de quantidade;
+- **ordenação alfabética pura embaralha.** Um programa que ordene por texto
+  cru mostra `VARD0, VARD1, VARD10, VARD11, VARD2…`. O Explorer do Windows e o
+  próprio pipeline usam ordenação natural, então na prática a sequência aparece
+  certa — mas se algum sistema externo do seu fluxo ordenar alfabeticamente, use
+  largura fixa nesse caso: `--digitos 7`.
+
+O `--continuar` segue funcionando e **lê os dois formatos**: um acervo antigo
+com `VARD0000042` faz o próximo lote começar em `VARD43`, sem colisão.
 
 ---
 

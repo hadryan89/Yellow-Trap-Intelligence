@@ -7,7 +7,7 @@ O pipeline tem duas etapas e termina no recorte dos quadrantes.
 
 Modulos:
     opcoes      - OpcoesProcessamento: o contrato de entrada de uma execucao
-    renomeacao  - Etapa 1: plano de nomes (grid a1..d10 ou VARD0000001) e sua
+    renomeacao  - Etapa 1: plano de nomes (grid a1..d10 ou VARD0) e sua
                   materializacao (virtual / hardlink / copiar+MD5 / mover)
     recorte     - Etapa 2: recorta o quadrante central (deteccao de grade)
     exportacao  - gravacao dos quadrantes (PNG / TIFF / JPEG)

@@ -5,7 +5,7 @@ Pontos criticos:
   * ordem natural (img2 antes de img10) - se a ordem quebrar, todo o de-para
     sai trocado;
   * a copia tem que ser byte-a-byte identica (MD5 conferido);
-  * o plano sequencial (VARD0000001) nao pode ter teto de quantidade;
+  * o plano sequencial (VARD0, VARD1, ...) nao pode ter teto de quantidade;
   * a estrategia 'virtual' nao pode escrever nada em disco;
   * o ZIP tem que ser ZIP_STORED (sem recompressao).
 """
@@ -102,11 +102,21 @@ def test_mapeamento_ignora_extensoes_nao_suportadas(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Plano sequencial (VARD0000001)
+# Plano sequencial (VARD0, VARD1, ...)
 # ---------------------------------------------------------------------------
 
 
-def test_sequencial_gera_nomes_com_zero_a_esquerda(tmp_path):
+def test_sequencial_usa_o_padrao_sem_zeros_a_esquerda(tmp_path):
+    """O default e VARD0, VARD1, VARD2 - contador cru, comecando em zero."""
+    caminhos = _criar_fotos(tmp_path, ["DSC1.JPG", "DSC2.jpg", "DSC3.png"])
+    itens = mapear_sequencial(caminhos)
+
+    assert [i.nome_novo for i in itens] == ["VARD0.jpg", "VARD1.jpg", "VARD2.png"]
+    assert itens[0].stem_novo == "VARD0"
+
+
+def test_sequencial_aceita_largura_fixa_se_pedida(tmp_path):
+    """`digitos` continua disponivel para quem quiser nomes alinhados."""
     caminhos = _criar_fotos(tmp_path, ["DSC1.JPG", "DSC2.jpg", "DSC3.png"])
     itens = mapear_sequencial(caminhos, prefixo="VARD", digitos=7, inicio=1)
 
@@ -125,18 +135,25 @@ def test_sequencial_nao_tem_teto_de_quantidade(tmp_path):
 
     assert len(plano) == 2000
     assert plano.ignorados == []
-    assert plano.itens[0].nome_novo == "VARD0000001.jpg"
-    assert plano.itens[-1].nome_novo == "VARD0002000.jpg"
+    # Sem largura fixa o contador so cresce - nada e truncado em 4 digitos.
+    assert plano.itens[0].nome_novo == "VARD0.jpg"
+    assert plano.itens[-1].nome_novo == "VARD1999.jpg"
 
 
 def test_sequencial_respeita_o_indice_inicial(tmp_path):
     caminhos = _criar_fotos(tmp_path, ["a.jpg", "b.jpg"])
     itens = mapear_sequencial(caminhos, inicio=41)
-    assert [i.nome_novo for i in itens] == ["VARD0000041.jpg", "VARD0000042.jpg"]
+    assert [i.nome_novo for i in itens] == ["VARD41.jpg", "VARD42.jpg"]
 
 
 def test_proximo_indice_le_o_maior_ja_existente(tmp_path):
-    _criar_fotos(tmp_path, ["VARD0000001.png", "VARD0000042.png", "outro.png"])
+    _criar_fotos(tmp_path, ["VARD0.png", "VARD42.png", "outro.png"])
+    assert proximo_indice_sequencial(tmp_path) == 43
+
+
+def test_proximo_indice_entende_o_acervo_antigo_com_zeros(tmp_path):
+    """Lotes gravados antes, no formato VARD0000042, continuam sendo lidos."""
+    _criar_fotos(tmp_path, ["VARD0000042.png", "VARD7.png"])
     assert proximo_indice_sequencial(tmp_path) == 43
 
 
@@ -179,8 +196,8 @@ def test_estrategia_virtual_nao_escreve_nada(tmp_path):
 
     assert not destino.exists()
     assert resultado.itens == [
-        (str(origem / "IMG_1.jpg"), "VARD0000001"),
-        (str(origem / "IMG_2.jpg"), "VARD0000002"),
+        (str(origem / "IMG_1.jpg"), "VARD0"),
+        (str(origem / "IMG_2.jpg"), "VARD1"),
     ]
 
 
@@ -193,7 +210,7 @@ def test_estrategia_hardlink_nao_duplica_conteudo(tmp_path):
     plano = planejar_nomeacao(caminhos, modo=settings.MODO_SEQUENCIAL)
     aplicar_plano(plano, destino, estrategia=settings.ESTRATEGIA_HARDLINK)
 
-    alvo = destino / "VARD0000001.jpg"
+    alvo = destino / "VARD0.jpg"
     assert alvo.read_bytes() == (origem / "IMG_1.jpg").read_bytes()
 
 
@@ -207,7 +224,7 @@ def test_estrategia_mover_esvazia_a_origem(tmp_path):
     aplicar_plano(plano, destino, estrategia=settings.ESTRATEGIA_MOVER)
 
     assert not (origem / "IMG_1.jpg").exists()
-    assert (destino / "VARD0000001.jpg").exists()
+    assert (destino / "VARD0.jpg").exists()
 
 
 def test_materializacao_em_paralelo_preserva_a_ordem(tmp_path):
@@ -222,7 +239,7 @@ def test_materializacao_em_paralelo_preserva_a_ordem(tmp_path):
                               estrategia=settings.ESTRATEGIA_COPIAR, workers=8)
 
     assert [stem for _, stem in resultado.itens] == [
-        f"VARD{i:07d}" for i in range(1, 31)
+        f"VARD{i}" for i in range(30)
     ]
     assert len(resultado.hashes) == 30
     assert resultado.falhas == []
@@ -242,7 +259,7 @@ def test_arquivo_ilegivel_nao_derruba_a_materializacao(tmp_path):
 
     assert len(resultado.falhas) == 1
     assert resultado.falhas[0]["arquivo"] == "IMG_1.jpg"
-    assert [stem for _, stem in resultado.itens] == ["VARD0000002"]
+    assert [stem for _, stem in resultado.itens] == ["VARD1"]
 
 
 # ---------------------------------------------------------------------------

@@ -252,7 +252,7 @@ def processar_foto(
 
     nome_saida       nome do arquivo de saida SEM extensao. E por aqui que a
                      renomeacao acontece quando ela nao materializa a pasta
-                     02_renomeadas: o quadrante ja nasce como VARD0000001.png
+                     02_renomeadas: o quadrante ja nasce como VARD0.png
                      (ou a1.png), sem copiar o lote inteiro antes.
     pular_existentes se o quadrante de destino ja existe, nao reprocessa -
                      retomar um lote interrompido custa so o que faltava.

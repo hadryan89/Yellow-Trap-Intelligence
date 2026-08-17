@@ -55,6 +55,7 @@ tests/fixtures/*.tiff
 # ---------------------------------------------------------------------------
 .vscode/
 .idea/
+.claude/
 *.swp
 Thumbs.db
 desktop.ini

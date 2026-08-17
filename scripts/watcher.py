@@ -405,7 +405,7 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
                         default=settings.MODO_PADRAO,
-                        help="grid = a1..d10 | sequencial = VARD0000001 | "
+                        help="grid = a1..d10 | sequencial = VARD0 | "
                              "recorte = mantem o nome de origem")
     parser.add_argument("--tamanho-lote", type=int,
                         default=settings.QUANTIDADE_ESPERADA,

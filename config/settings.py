@@ -61,7 +61,7 @@ PASTAS_OBRIGATORIAS = [
 #
 #   grid       -> comportamento historico: renomeia para o grid da placa
 #                 (a1..d10, ate QUANTIDADE_ESPERADA fotos) e recorta.
-#   sequencial -> renomeia para VARD0000001, VARD0000002, ... sem limite de
+#   sequencial -> renomeia para VARD0, VARD1, VARD2, ... sem limite de
 #                 quantidade, e recorta. Modo indicado para lotes grandes.
 #   recorte    -> nao renomeia nada: recorta preservando o nome de origem.
 MODO_GRID = "grid"
@@ -70,10 +70,18 @@ MODO_RECORTE = "recorte"
 MODOS_VALIDOS = (MODO_GRID, MODO_SEQUENCIAL, MODO_RECORTE)
 MODO_PADRAO = MODO_GRID
 
-# --- Modo sequencial (VARD0000001) ---
+# --- Modo sequencial (VARD0, VARD1, VARD2, ...) ---
 SEQUENCIAL_PREFIXO = "VARD"
-SEQUENCIAL_DIGITOS = 7  # VARD0000001 .. VARD9999999
-SEQUENCIAL_INICIO = 1
+# Largura MINIMA do contador, preenchida com zeros a esquerda.
+#   1 -> VARD0, VARD1, ... VARD10, VARD100  (sem zeros; e o padrao)
+#   7 -> VARD0000000, VARD0000001, ...      (nomes de largura fixa)
+# Com 1, o contador nunca e truncado: passando de 9 o nome simplesmente
+# cresce (VARD10). A ordenacao do pipeline e natural, entao VARD2 continua
+# vindo antes de VARD10 - so a ordenacao alfabetica pura (de alguns
+# programas externos) e que embaralharia. Se isso importar no seu fluxo,
+# use uma largura fixa aqui.
+SEQUENCIAL_DIGITOS = 1
+SEQUENCIAL_INICIO = 0  # a primeira foto do lote vira VARD0
 # True  -> a numeracao continua de onde parou (le o maior indice ja existente
 #          na pasta de saida). Essencial quando o sistema recebe varios envios
 #          que precisam entrar no mesmo acervo sem colidir.
@@ -96,7 +104,7 @@ EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
 #
 #   virtual  -> nada e gravado em 02_renomeadas. O nome novo e aplicado
 #               direto no arquivo do recorte. E o mais rapido e o unico que
-#               nao duplica o lote em disco - obrigatorio em lotes grandes.
+#               nao duplica o lote em disco - PADRAO de todos os modos.
 #   hardlink -> cria um hardlink em 02_renomeadas (instantaneo, sem espaco
 #               extra). Cai para 'copiar' se o sistema de arquivos recusar.
 #   copiar   -> copia byte-a-byte (comportamento historico do Colab).
@@ -108,11 +116,15 @@ ESTRATEGIA_MOVER = "mover"
 ESTRATEGIAS_VALIDAS = (ESTRATEGIA_VIRTUAL, ESTRATEGIA_HARDLINK,
                        ESTRATEGIA_COPIAR, ESTRATEGIA_MOVER)
 
-# Default por modo. O modo grid mantem a copia com MD5 (lote de 40 fotos, o
-# custo e irrelevante e a rastreabilidade e util); o sequencial, pensado para
-# milhares de fotos, nao materializa nada.
+# Default de TODOS os modos: 'virtual'. Uma foto que entra gera UM arquivo
+# novo - o quadrante recortado, ja com o nome final. A pasta 02_renomeadas
+# so e escrita se alguem pedir explicitamente (--materializar copiar, por
+# exemplo), porque qualquer estrategia diferente de 'virtual' duplica o lote
+# inteiro em disco: 30 fotos de entrada viravam 30 copias em 02_renomeadas
+# + 30 quadrantes em 03_recortadas.
+RENOMEACAO_ESTRATEGIA_PADRAO = ESTRATEGIA_VIRTUAL
 RENOMEACAO_ESTRATEGIA = {
-    MODO_GRID: ESTRATEGIA_COPIAR,
+    MODO_GRID: ESTRATEGIA_VIRTUAL,
     MODO_SEQUENCIAL: ESTRATEGIA_VIRTUAL,
     MODO_RECORTE: ESTRATEGIA_VIRTUAL,
 }

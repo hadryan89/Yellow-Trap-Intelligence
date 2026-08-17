@@ -519,6 +519,10 @@ class SumarioLote:
     duracao_seg: float = 0.0
     total_entrada: int = 0
     renomeadas: int = 0
+    # Copias intermediarias gravadas em 02_renomeadas. No caminho padrao
+    # (estrategia 'virtual') e sempre 0: uma foto de entrada gera exatamente
+    # um arquivo novo, o quadrante recortado.
+    arquivos_intermediarios: int = 0
     ignoradas: int = 0            # fora do teto do grid / do limite pedido
     recortadas_ok: int = 0
     recortadas_sem_deteccao: int = 0
@@ -598,6 +602,10 @@ class SumarioLote:
             f"  Fotos de entrada .............. {self.total_entrada}",
             f"  Nomeadas ...................... {self.renomeadas}",
         ]
+        if self.arquivos_intermediarios:
+            linhas.append(
+                f"  Copias em 02_renomeadas ....... {self.arquivos_intermediarios}"
+                "  <- duplicacao em disco")
         if self.ignoradas:
             linhas.append(f"  Ignoradas (fora do lote) ...... {self.ignoradas}")
         if self.puladas:

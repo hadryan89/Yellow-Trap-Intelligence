@@ -102,7 +102,8 @@ class OpcoesProcessamento:
         self._estrategia_explicita = self.estrategia_renomeacao is not None
         self.estrategia_renomeacao = str(_ou(
             self.estrategia_renomeacao,
-            settings.RENOMEACAO_ESTRATEGIA.get(self.modo, settings.ESTRATEGIA_VIRTUAL),
+            settings.RENOMEACAO_ESTRATEGIA.get(
+                self.modo, settings.RENOMEACAO_ESTRATEGIA_PADRAO),
         )).strip().lower()
         if self.estrategia_renomeacao not in settings.ESTRATEGIAS_VALIDAS:
             raise ValueError(
@@ -163,6 +164,18 @@ class OpcoesProcessamento:
         return self.estrategia_renomeacao != settings.ESTRATEGIA_VIRTUAL
 
     @property
+    def duplica_em_disco(self) -> bool:
+        """
+        True quando o lote passa a existir DUAS vezes em disco.
+
+        So 'copiar' e 'hardlink' criam um segundo arquivo por foto em
+        02_renomeadas; 'mover' apenas realoca e 'virtual' (padrao) nao
+        escreve nada la.
+        """
+        return self.estrategia_renomeacao in (settings.ESTRATEGIA_COPIAR,
+                                              settings.ESTRATEGIA_HARDLINK)
+
+    @property
     def renomeia(self) -> bool:
         """False no modo 'recorte' (nome de origem preservado)."""
         return self.modo != settings.MODO_RECORTE
@@ -198,9 +211,9 @@ class OpcoesProcessamento:
         Clone com campos trocados (revalida tudo).
 
         Trocar o modo sem dizer nada sobre a estrategia faz o clone adotar a
-        estrategia default do novo modo - do contrario um `com(modo=...)`
-        levaria a copia com MD5 do grid para um lote sequencial de milhares
-        de fotos sem ninguem ter pedido.
+        estrategia default do novo modo - do contrario uma estrategia herdada
+        por acaso (e que pode duplicar o lote em disco) atravessaria a troca
+        de modo sem ninguem ter pedido.
         """
         troca_modo = "modo" in alteracoes and alteracoes["modo"] != self.modo
         if (troca_modo and "estrategia_renomeacao" not in alteracoes
@@ -230,6 +243,11 @@ class OpcoesProcessamento:
                 linhas.append(f"  Conferencia MD5 ............. {self.verificar_md5}")
         else:
             linhas.append("  Nomeacao .................... preserva o nome de origem")
+        if self.duplica_em_disco:
+            linhas.append("  Arquivos por foto ........... 2 (copia intermediaria "
+                          "+ quadrante)")
+        else:
+            linhas.append("  Arquivos por foto ........... 1 (apenas o quadrante)")
         if self.limite:
             linhas.append(f"  Limite ...................... {self.limite} foto(s)")
         if self.pular_existentes:

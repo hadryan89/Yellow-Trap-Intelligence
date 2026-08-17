@@ -4,7 +4,7 @@ Modo BATCH - nomeia e recorta um lote, uma vez.
 Dois modos de nomeacao (e um terceiro que nao renomeia):
 
     --modo grid         a1..d10, ate 40 fotos por lote (padrao historico)
-    --modo sequencial   VARD0000001, VARD0000002, ... sem limite
+    --modo sequencial   VARD0, VARD1, VARD2, ... sem limite
     --modo recorte      preserva o nome de origem
 
 Uso:
@@ -44,7 +44,7 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
                         default=settings.MODO_PADRAO,
-                        help="grid = a1..d10 | sequencial = VARD0000001 | "
+                        help="grid = a1..d10 | sequencial = VARD0 | "
                              "recorte = mantem o nome de origem")
     parser.add_argument("--entrada", type=Path, default=None,
                         help="pasta com as fotos brutas")
@@ -63,7 +63,8 @@ def construir_parser() -> argparse.ArgumentParser:
     grupo_nome.add_argument("--prefixo", default=None,
                             help="prefixo do modo sequencial")
     grupo_nome.add_argument("--digitos", type=int, default=None,
-                            help="digitos do contador (VARD0000001 = 7)")
+                            help="largura minima do contador: 1 = VARD0, "
+                                 "VARD1... | 7 = VARD0000000, VARD0000001...")
     grupo_nome.add_argument("--inicio", type=int, default=None,
                             help="primeiro numero da sequencia")
     grupo_nome.add_argument("--continuar", dest="continuar", action="store_true",

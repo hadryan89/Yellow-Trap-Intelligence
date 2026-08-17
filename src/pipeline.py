@@ -6,14 +6,17 @@ O pipeline tem DUAS etapas e termina no recorte:
     01_entrada_bruta  --nomeacao-->  (plano de nomes)
                       --recorte-->   03_recortadas
 
-O plano de nomes so vira arquivo em 02_renomeadas quando a estrategia pede
-(copiar/hardlink/mover). No caminho padrao dos lotes grandes ele e aplicado
-direto no arquivo do recorte - o quadrante ja nasce com o nome final.
+UMA foto de entrada gera UM arquivo de saida. O plano de nomes so vira
+arquivo em 02_renomeadas quando alguem pede explicitamente a estrategia
+copiar/hardlink/mover; no caminho padrao (virtual, em todos os modos) ele e
+aplicado direto no arquivo do recorte - o quadrante ja nasce com o nome
+final, sem copia intermediaria. Jogar 30 fotos na entrada produz 30
+quadrantes, e mais nada.
 
 Modos (config/settings.py -> MODOS_VALIDOS):
 
     grid        a1..d10, ate 40 fotos por lote (comportamento historico)
-    sequencial  VARD0000001, VARD0000002, ... sem limite de quantidade
+    sequencial  VARD0, VARD1, VARD2, ... sem limite de quantidade
     recorte     preserva o nome de origem
 
 Regras de robustez:
@@ -123,6 +126,19 @@ def etapa_nomeacao(sumario: SumarioLote, opcoes: OpcoesProcessamento,
             estrategia=settings.ESTRATEGIA_VIRTUAL,
         )
 
+    if not opcoes.materializa_renomeadas:
+        # Caminho padrao: o nome novo vai direto no arquivo do recorte. Uma
+        # foto de entrada = um arquivo de saida, sem copia intermediaria.
+        logger.info("Nomeacao aplicada direto no recorte (estrategia 'virtual'): "
+                    "nenhuma copia intermediaria sera gravada em %s.",
+                    opcoes.pasta_renomeadas)
+    elif opcoes.duplica_em_disco:
+        logger.warning(
+            "Estrategia '%s': %d copia(s) do lote serao gravadas em %s ALEM "
+            "dos quadrantes recortados. Use 'virtual' (padrao) para nao "
+            "duplicar as fotos em disco.",
+            opcoes.estrategia_renomeacao, len(plano), opcoes.pasta_renomeadas)
+
     with Cronometro(f"ETAPA 1/2 - Nomeacao ({opcoes.estrategia_renomeacao})", logger):
         resultado = mod_renomeacao.aplicar_plano(
             plano,
@@ -135,6 +151,10 @@ def etapa_nomeacao(sumario: SumarioLote, opcoes: OpcoesProcessamento,
         )
 
     sumario.renomeadas = len(resultado.itens)
+    # So conta o que virou arquivo NOVO em 02_renomeadas. Em 'virtual' e
+    # 'mover' nada e duplicado, entao o contador fica em zero.
+    if opcoes.duplica_em_disco:
+        sumario.arquivos_intermediarios = len(resultado.itens)
     sumario.estender_falhas(resultado.falhas)
 
     if opcoes.criar_zip and opcoes.materializa_renomeadas:

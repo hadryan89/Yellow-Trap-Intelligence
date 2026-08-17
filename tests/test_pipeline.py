@@ -143,6 +143,41 @@ def test_processar_item_aceita_par_caminho_nome(tmp_path, foto_valida):
 
 
 # ---------------------------------------------------------------------------
+# Nao duplicar o lote em disco
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("modo", ["grid", "sequencial", "recorte"])
+def test_n_fotos_entram_n_arquivos_saem(pastas_isoladas, foto_valida, modo):
+    """
+    Regressao: o lote nao pode ser replicado pelas pastas do pipeline.
+
+    30 fotos na entrada tem que produzir 30 quadrantes em 03_recortadas e
+    NADA em 02_renomeadas - em qualquer um dos tres modos. Antes, o modo
+    grid materializava uma copia byte-a-byte por foto e o mesmo lote passava
+    a ocupar disco duas vezes.
+    """
+    entrada = pastas_isoladas["PASTA_ENTRADA"]
+    _povoar_entrada(entrada, foto_valida, quantidade=30)
+
+    sumario = executar_processamento(
+        _opcoes(pastas_isoladas, modo=modo, lote_id=f"LOTE_1X_{modo}"))
+
+    assert sumario.sucesso is True
+    assert sumario.recortadas_ok == 30
+    assert sumario.arquivos_intermediarios == 0
+
+    # Saida: exatamente uma imagem por foto de entrada.
+    saida = list(pastas_isoladas["PASTA_RECORTADAS"].glob("*.png"))
+    assert len(saida) == 30
+    assert len({p.name for p in saida}) == 30
+
+    # Nenhuma copia intermediaria e a entrada intacta.
+    assert list(pastas_isoladas["PASTA_RENOMEADAS"].iterdir()) == []
+    assert len(list(entrada.glob("*.png"))) == 30
+
+
+# ---------------------------------------------------------------------------
 # Modo grid (comportamento historico)
 # ---------------------------------------------------------------------------
 
@@ -166,9 +201,10 @@ def test_modo_grid_ponta_a_ponta(pastas_isoladas, foto_valida):
     assert (recortadas / "a1.png").exists() and (recortadas / "d10.png").exists()
     assert len(list(recortadas.glob("*.png"))) == 40
 
-    # A estrategia default do grid materializa 02_renomeadas com MD5.
-    renomeadas = pastas_isoladas["PASTA_RENOMEADAS"]
-    assert (renomeadas / "a1.png").exists() and (renomeadas / "d10.png").exists()
+    # Estrategia virtual (padrao): 02_renomeadas nao e escrita - as 40 fotos
+    # de entrada geram 40 arquivos novos, e nao 80.
+    assert list(pastas_isoladas["PASTA_RENOMEADAS"].iterdir()) == []
+    assert sumario.arquivos_intermediarios == 0
 
     relatorio = pastas_isoladas["PASTA_RELATORIOS"] / "LOTE_TESTE" / "sumario.json"
     assert relatorio.exists()
@@ -205,12 +241,12 @@ def test_modo_grid_com_mais_fotos_que_posicoes(pastas_isoladas, foto_valida,
 
 
 # ---------------------------------------------------------------------------
-# Modo sequencial (VARD0000001)
+# Modo sequencial (VARD0, VARD1, ...)
 # ---------------------------------------------------------------------------
 
 
 def test_modo_sequencial_renomeia_e_recorta(pastas_isoladas, foto_valida):
-    """Renomeia para VARD0000001... e recorta, sem materializar 02_renomeadas."""
+    """Renomeia para VARD0, VARD1... e recorta, sem materializar 02_renomeadas."""
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida,
                     quantidade=12, prefixo="DSC")
 
@@ -221,10 +257,9 @@ def test_modo_sequencial_renomeia_e_recorta(pastas_isoladas, foto_valida):
     assert sumario.recortadas_ok == 12
 
     recortadas = pastas_isoladas["PASTA_RECORTADAS"]
-    nomes = sorted(p.name for p in recortadas.glob("*.png"))
-    assert nomes[0] == "VARD0000001.png"
-    assert nomes[-1] == "VARD0000012.png"
-    assert len(nomes) == 12
+    # A numeracao comeca em 0 e nao leva zeros a esquerda: VARD0 .. VARD11.
+    nomes = {p.name for p in recortadas.glob("*.png")}
+    assert nomes == {f"VARD{i}.png" for i in range(12)}
 
     # Estrategia virtual: nada foi copiado para 02_renomeadas...
     assert list(pastas_isoladas["PASTA_RENOMEADAS"].iterdir()) == []
@@ -233,7 +268,7 @@ def test_modo_sequencial_renomeia_e_recorta(pastas_isoladas, foto_valida):
 
 
 def test_modo_sequencial_respeita_a_ordem_natural(pastas_isoladas, foto_valida):
-    """DSC_2 tem que virar VARD0000002, e nao VARD0000010."""
+    """DSC_2 tem que virar VARD1, e nao o ultimo numero do lote."""
     entrada = pastas_isoladas["PASTA_ENTRADA"]
     dados = foto_valida.read_bytes()
     for nome in ["DSC_10.png", "DSC_2.png", "DSC_1.png"]:
@@ -244,11 +279,11 @@ def test_modo_sequencial_respeita_a_ordem_natural(pastas_isoladas, foto_valida):
                                    lote_id="LOTE_ORDEM"))
 
     renomeadas = pastas_isoladas["PASTA_RENOMEADAS"]
-    assert (renomeadas / "VARD0000001.png").exists()
-    assert (renomeadas / "VARD0000002.png").exists()
-    assert (renomeadas / "VARD0000003.png").exists()
+    assert (renomeadas / "VARD0.png").exists()
+    assert (renomeadas / "VARD1.png").exists()
+    assert (renomeadas / "VARD2.png").exists()
     # A ordem natural garante o de-para; conferido pelos bytes de origem.
-    assert (renomeadas / "VARD0000003.png").read_bytes() == \
+    assert (renomeadas / "VARD2.png").read_bytes() == \
            (entrada / "DSC_10.png").read_bytes()
 
 
@@ -265,8 +300,8 @@ def test_modo_sequencial_continua_a_numeracao(pastas_isoladas, foto_valida):
     executar_processamento(_opcoes(pastas_isoladas, modo="sequencial",
                                    continuar_numeracao=True, lote_id="ENVIO_2"))
 
-    nomes = sorted(p.name for p in pastas_isoladas["PASTA_RECORTADAS"].glob("*.png"))
-    assert nomes == [f"VARD{i:07d}.png" for i in range(1, 6)]
+    nomes = {p.name for p in pastas_isoladas["PASTA_RECORTADAS"].glob("*.png")}
+    assert nomes == {f"VARD{i}.png" for i in range(5)}
 
 
 def test_modo_sequencial_com_limite(pastas_isoladas, foto_valida):
@@ -309,7 +344,7 @@ def test_recorte_identico_em_todos_os_modos(pastas_isoladas, foto_valida,
     _povoar_entrada(entrada, foto_valida, quantidade=1, prefixo="UNICA")
 
     saidas = {}
-    for modo, nome in (("grid", "a1.png"), ("sequencial", "VARD0000001.png"),
+    for modo, nome in (("grid", "a1.png"), ("sequencial", "VARD0.png"),
                        ("recorte", "UNICA_001.png")):
         pasta = tmp_path / f"saida_{modo}"
         executar_processamento(_opcoes(pastas_isoladas, modo=modo,
@@ -373,12 +408,18 @@ def test_foto_corrompida_no_meio_do_lote(pastas_isoladas, foto_valida):
 
 def test_falha_no_grid_move_a_copia_e_preserva_o_original(pastas_isoladas,
                                                           foto_valida):
-    """Com materializacao, quem vai para _falhas e a copia - nao o original."""
+    """
+    Com materializacao, quem vai para _falhas e a copia - nao o original.
+
+    Materializar deixou de ser o default (duplicava o lote em disco), entao
+    aqui a estrategia 'copiar' e pedida explicitamente.
+    """
     entrada = pastas_isoladas["PASTA_ENTRADA"]
     _povoar_entrada(entrada, foto_valida, quantidade=1, prefixo="BOA")
     (entrada / "RUIM_001.png").write_bytes(b"nao sou uma imagem")
 
     sumario = executar_processamento(_opcoes(pastas_isoladas, modo="grid",
+                                             estrategia_renomeacao="copiar",
                                              lote_id="LOTE_GRID_FALHA"))
 
     assert sumario.recortadas_falha == 1

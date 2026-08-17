@@ -23,12 +23,22 @@ def test_defaults_vem_de_settings():
     assert opcoes.formato == settings.RECORTE_FORMATO_SAIDA
 
 
-def test_estrategia_default_depende_do_modo():
-    """Grid mantem a copia com MD5; sequencial nao materializa nada."""
-    assert OpcoesProcessamento(modo="grid").estrategia_renomeacao == "copiar"
-    assert OpcoesProcessamento(modo="sequencial").estrategia_renomeacao == "virtual"
-    assert OpcoesProcessamento(modo="sequencial").materializa_renomeadas is False
-    assert OpcoesProcessamento(modo="grid").materializa_renomeadas is True
+def test_nenhum_modo_duplica_o_lote_por_padrao():
+    """Uma foto de entrada = um arquivo de saida, em qualquer modo."""
+    for modo in settings.MODOS_VALIDOS:
+        opcoes = OpcoesProcessamento(modo=modo)
+        assert opcoes.estrategia_renomeacao == "virtual", modo
+        assert opcoes.materializa_renomeadas is False, modo
+        assert opcoes.duplica_em_disco is False, modo
+
+
+def test_duplicacao_so_acontece_se_for_pedida():
+    assert OpcoesProcessamento(estrategia_renomeacao="copiar").duplica_em_disco is True
+    assert OpcoesProcessamento(estrategia_renomeacao="hardlink").duplica_em_disco is True
+    # 'mover' materializa 02_renomeadas, mas realoca o arquivo em vez de copiar.
+    mover = OpcoesProcessamento(estrategia_renomeacao="mover")
+    assert mover.materializa_renomeadas is True
+    assert mover.duplica_em_disco is False
 
 
 def test_origem_do_recorte_segue_a_estrategia():
