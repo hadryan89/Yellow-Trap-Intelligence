@@ -136,7 +136,7 @@ descarte silencioso. Lote maior que o grid → use `--modo sequencial`.
 
 ```powershell
 # 1. Clone o repositório
-git clone https://github.com/hadryan89/ahdasjdas.git yellowtrap_pipeline
+git clone https://github.com/hadryan89/Yellow-Trap-Intelligence.git yellowtrap_pipeline
 cd yellowtrap_pipeline
 
 # 2. Crie o ambiente virtual
