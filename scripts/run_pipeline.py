@@ -4,7 +4,7 @@ Modo BATCH - nomeia e recorta um lote, uma vez.
 Dois modos de nomeacao (e um terceiro que nao renomeia):
 
     --modo grid         a1..d10, ate 40 fotos por lote (padrao historico)
-    --modo sequencial   VARD0, VARD1, VARD2, ... sem limite
+    --modo sequencial   VARD1, VARD2, VARD3, ... sem limite
     --modo recorte      preserva o nome de origem
 
 Uso:
@@ -13,6 +13,11 @@ Uso:
     python scripts/run_pipeline.py --modo sequencial --continuar --workers 12
     python scripts/run_pipeline.py --modo grid --materializar copiar --zip
     python scripts/run_pipeline.py --modo sequencial --simular
+    python scripts/run_pipeline.py --modo sequencial --perfil azul
+
+O recorte e o MESMO para armadilha amarela e azul - o detector olha a
+geometria da grade, nao a cor do papel. --perfil so aperta a faixa de largura
+aceita para o quadrante, como trava extra num lote dificil.
 
 Codigo de saida:
     0  lote concluido sem nenhuma falha
@@ -44,7 +49,7 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
                         default=settings.MODO_PADRAO,
-                        help="grid = a1..d10 | sequencial = VARD0 | "
+                        help="grid = a1..d10 | sequencial = VARD1 | "
                              "recorte = mantem o nome de origem")
     parser.add_argument("--entrada", type=Path, default=None,
                         help="pasta com as fotos brutas")
@@ -56,6 +61,11 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="processos paralelos no recorte (default: CPUs - 1)")
     parser.add_argument("--formato", choices=list(FORMATOS_VALIDOS), default=None,
                         help="formato dos quadrantes recortados")
+    parser.add_argument("--perfil", choices=list(settings.RECORTE_PERFIS),
+                        default=None,
+                        help="cor da armadilha: auto atende amarela e azul "
+                             "(padrao); amarela/azul travam a faixa esperada "
+                             "do quadrante num lote dificil")
     parser.add_argument("--limite", type=int, default=None,
                         help="processa apenas as N primeiras fotos (teste/amostra)")
 
@@ -63,8 +73,8 @@ def construir_parser() -> argparse.ArgumentParser:
     grupo_nome.add_argument("--prefixo", default=None,
                             help="prefixo do modo sequencial")
     grupo_nome.add_argument("--digitos", type=int, default=None,
-                            help="largura minima do contador: 1 = VARD0, "
-                                 "VARD1... | 7 = VARD0000000, VARD0000001...")
+                            help="largura minima do contador: 1 = VARD1, "
+                                 "VARD2... | 7 = VARD0000001, VARD0000002...")
     grupo_nome.add_argument("--inicio", type=int, default=None,
                             help="primeiro numero da sequencia")
     grupo_nome.add_argument("--continuar", dest="continuar", action="store_true",
@@ -110,6 +120,7 @@ def main() -> int:
         lote_id=args.lote_id,
         workers=args.workers,
         formato=args.formato,
+        perfil=args.perfil,
         limite=args.limite,
         prefixo=args.prefixo,
         digitos=args.digitos,

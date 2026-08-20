@@ -39,8 +39,20 @@ def pasta_fixtures() -> Path:
 
 @pytest.fixture
 def foto_valida() -> Path:
-    """Foto sintetica com a grade detectavel (3 quadrantes na horizontal)."""
+    """Foto sintetica com a grade detectavel, fundo AMARELO."""
     return PASTA_FIXTURES / "foto_grade_valida.png"
+
+
+@pytest.fixture
+def foto_azul() -> Path:
+    """Mesma geometria da foto_valida, com fundo de armadilha AZUL."""
+    return PASTA_FIXTURES / "foto_grade_azul.png"
+
+
+@pytest.fixture
+def foto_inclinada() -> Path:
+    """Grade girada: exercita a correcao de inclinacao."""
+    return PASTA_FIXTURES / "foto_grade_inclinada.png"
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ IMG_042.jpg, ...) e recebem um nome novo antes do recorte. Ha dois esquemas:
 
   grid       a1, a2, ..., a10, b1, ..., d10  - posicao na placa YellowTrap,
              limitado a QUANTIDADE_ESPERADA fotos por lote;
-  sequencial VARD0, VARD1, VARD2, ...        - sem limite de quantidade.
+  sequencial VARD1, VARD2, VARD3, ...        - sem limite de quantidade.
 
 Nos dois casos a ordem vem da ORDEM NATURAL dos arquivos (img2 antes de
 img10), que por sua vez vem do operador: as fotos sao tiradas em sequencia.
@@ -71,7 +71,7 @@ class ItemNomeacao:
     """Uma foto e o nome que ela recebe."""
 
     origem: Path
-    nome_novo: str  # com extensao: 'a1.jpg' | 'VARD0.jpg'
+    nome_novo: str  # com extensao: 'a1.jpg' | 'VARD1.jpg'
     indice: int
 
     @property
@@ -145,7 +145,7 @@ def mapear_sequencial(arquivos, prefixo: str | None = None,
                       digitos: int | None = None,
                       inicio: int | None = None) -> list[ItemNomeacao]:
     """
-    Nomes sequenciais VARD0, VARD1, VARD2, ... sem teto de quantidade.
+    Nomes sequenciais VARD1, VARD2, VARD3, ... sem teto de quantidade.
 
     `arquivos`: lista de caminhos JA ordenados naturalmente.
     `digitos` e a largura MINIMA do contador (1 = sem zeros a esquerda); o

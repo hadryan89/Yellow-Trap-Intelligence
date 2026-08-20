@@ -64,6 +64,7 @@ class OpcoesProcessamento:
 
     # --- recorte ---
     formato: str | None = None
+    perfil: str | None = None          # cor da armadilha: auto | amarela | azul
     pular_existentes: bool | None = None
     limpar_saida: bool | None = None
 
@@ -132,6 +133,13 @@ class OpcoesProcessamento:
             raise ValueError(
                 f"Formato invalido: {self.formato!r}. "
                 f"Validos: {', '.join(settings.RECORTE_FORMATOS_VALIDOS)}"
+            )
+        self.perfil = str(_ou(self.perfil,
+                              settings.RECORTE_PERFIL_PADRAO)).strip().lower()
+        if self.perfil not in settings.RECORTE_PERFIS:
+            raise ValueError(
+                f"Perfil de armadilha invalido: {self.perfil!r}. "
+                f"Validos: {', '.join(settings.RECORTE_PERFIS)}"
             )
         self.pular_existentes = bool(_ou(self.pular_existentes,
                                          settings.RECORTE_PULAR_EXISTENTES))
@@ -231,6 +239,8 @@ class OpcoesProcessamento:
             f"  Entrada ..................... {self.pasta_entrada}",
             f"  Saida (recortes) ............ {self.pasta_recortadas}",
             f"  Formato do recorte .......... {self.formato}",
+            f"  Armadilha ................... {self.perfil}"
+            + (" (amarela e azul)" if self.perfil == "auto" else ""),
         ]
         if self.renomeia:
             if self.modo == settings.MODO_SEQUENCIAL:

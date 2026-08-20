@@ -2,22 +2,50 @@
 Protocolo 2 - Recorte do quadrante central.
 
 Cada foto individual captura o quadrante alvo mais pedacos dos vizinhos
-(limitacao do microscopio). O algoritmo detecta as linhas pretas da grade
-YellowTrap e recorta apenas o quadrante central.
+(limitacao do microscopio). O algoritmo detecta as linhas da grade impressa
+na armadilha e recorta apenas o quadrante que contem o centro da foto.
 
-As fotos sao landscape mostrando 3 quadrantes horizontalmente - por isso
-modo='so_vertical' (apenas linhas verticais sao detectadas).
+FUNCIONA COM QUALQUER COR DE ARMADILHA
+--------------------------------------
+A deteccao NAO depende da cor do fundo (amarelo, azul, ...). Em vez de
+binarizar o cinza - que confunde "linha da grade" com "fundo escuro" e
+quebra na armadilha azul, cujo fundo ja e escuro em tons de cinza - o
+detector trabalha em quatro passos:
+
+  1. BLACKHAT no canal V (brilho) com kernel HORIZONTAL. Isso realca apenas
+     faixas escuras ESTREITAS na horizontal, ou seja, linhas verticais.
+     Regioes escuras largas (moldura fora da armadilha, sombra, uma folha
+     caida) nao respondem - era exatamente isso que envenenava o azul.
+  2. CORRECAO DE INCLINACAO. As linhas raramente saem perfeitamente
+     verticais; 1 grau de giro ja espalha a linha por dezenas de colunas e
+     destroi a projecao. Uma busca tipo Radon acha o cisalhamento que deixa
+     o perfil mais nitido.
+  3. PERFIL POR COLUNA com criterio ABSOLUTO: vale como linha da grade a
+     coluna coberta por >= X% da altura da foto (nao "X% do pico mais
+     forte"). A exigencia e relaxada em niveis ate aparecer um par valido.
+  4. ESCOLHA GEOMETRICA do par: entre linhas CONSECUTIVAS, fica o par cuja
+     largura e plausivel para um quadrante e cujo meio esta mais perto do
+     centro da foto. Nunca mais "a linha mais escura ganha" - era assim que
+     o recorte pulava uma linha e entregava dois quadrantes colados.
+
+O recorte sai nos QUATRO lados. A celula da grade e menor que a altura da
+foto (9600x5400 para celula de ~4400), entao recortar so as laterais - o
+comportamento antigo - deixava a linha horizontal da grade e tiras dos
+quadrantes de cima e de baixo dentro da entrega. O eixo vertical passa pelo
+MESMO detector, com a imagem transposta.
+
+Quando uma das linhas esta ocluida (uma folha por cima, sujeira), o passo da
+grade e emprestado do outro eixo: a celula e proxima de quadrada, entao a
+altura dela serve de estimativa para a largura do quadrante e vice-versa. E
+so estimativa - cada eixo mede o proprio par sempre que consegue, porque a
+celula nao e exatamente quadrada em toda a armadilha.
 
 QUALIDADE
 ---------
-A deteccao roda sobre uma copia REDUZIDA em memoria (fator 0.25) por
-performance, mas o crop e aplicado na imagem ORIGINAL em resolucao cheia
-atraves de coordenadas fracionais. Nenhum pixel entregue passa por
-redimensionamento ou re-encoding lossy.
-
-Logica migrada VERBATIM do Colab. Os parametros default sao os validados:
-fator_deteccao=0.25, margem=8, modo='so_vertical', span_v_inicial_frac=0.5,
-span_h_inicial_frac=0.5, span_minimo_frac=0.15, dilatar=True.
+A deteccao roda sobre uma copia REDUZIDA em memoria por performance, mas o
+crop e aplicado na imagem ORIGINAL em resolucao cheia atraves de coordenadas
+fracionais. Nenhum pixel entregue passa por redimensionamento ou re-encoding
+lossy.
 """
 
 from __future__ import annotations
@@ -38,146 +66,473 @@ logger = obter_logger(__name__)
 __all__ = [
     "detectar_crop_box",
     "recortar_em_resolucao_cheia",
+    "resolver_perfil",
     "salvar_recortada",
     "processar_foto",
     "processar_item",
 ]
 
 
+def resolver_perfil(perfil: str | None = None) -> dict:
+    """Faixa de largura esperada do quadrante, por cor de armadilha."""
+    nome = str(perfil or settings.RECORTE_PERFIL_PADRAO).strip().lower()
+    if nome not in settings.RECORTE_PERFIS:
+        raise ValueError(
+            f"Perfil de armadilha invalido: {nome!r}. "
+            f"Validos: {', '.join(settings.RECORTE_PERFIS)}"
+        )
+    return {"nome": nome, **settings.RECORTE_PERFIS[nome]}
+
+
 # ---------------------------------------------------------------------------
-# Funcoes validadas no Colab - NAO ALTERAR A LOGICA NEM OS PARAMETROS
+# 1. Mapa das linhas da grade (independente da cor do fundo)
 # ---------------------------------------------------------------------------
 
 
-def _detectar_linhas_em_eixo(binario, eixo, span_inicial, span_minimo,
-                             limiar_frac=0.25, min_dist=30):
-    """Detecta linhas adaptivamente reduzindo o kernel ate achar >=2 picos."""
-    altura, largura = binario.shape
-    span = span_inicial
-    ultima_proj = np.zeros(largura if eixo == 'vertical' else altura)
-    ultima_img = np.zeros_like(binario)
+def _impar(valor, minimo: int) -> int:
+    """Tamanho de kernel: inteiro impar, nunca abaixo de `minimo`."""
+    return max(minimo, int(valor) | 1)
 
-    while span >= span_minimo:
-        if eixo == 'vertical':
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, span))
-            linhas = cv2.morphologyEx(binario, cv2.MORPH_OPEN, kernel, iterations=1)
-            projecao = np.sum(linhas > 0, axis=0)
+
+def _mascara_linhas(canal_v, espessura_max):
+    """
+    Binariza SO o que parece linha vertical escura.
+
+    O blackhat com kernel (espessura_max, 1) devolve, para cada pixel, o
+    quanto ele e mais escuro que a vizinhanca horizontal. Uma linha fina
+    responde forte; uma mancha escura mais larga que o kernel some.
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (espessura_max, 1))
+    blackhat = cv2.morphologyEx(canal_v, cv2.MORPH_BLACKHAT, kernel)
+    limiar = max(
+        settings.RECORTE_BLACKHAT_PISO,
+        float(np.percentile(blackhat, settings.RECORTE_BLACKHAT_PERCENTIL))
+        * settings.RECORTE_BLACKHAT_FATOR,
+    )
+    return (blackhat > limiar).astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------
+# 2. Correcao de inclinacao
+# ---------------------------------------------------------------------------
+
+
+def _cisalhar(mascara, tangente):
+    """Endireita as linhas verticais girando em torno da LINHA DO MEIO."""
+    if abs(tangente) < 1e-6:
+        return mascara
+    altura, largura = mascara.shape
+    matriz = np.float32([[1, tangente, -tangente * altura / 2.0], [0, 1, 0]])
+    return cv2.warpAffine(mascara, matriz, (largura, altura),
+                          flags=cv2.INTER_NEAREST,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def _estimar_inclinacao(mascara, graus_max, fator=0.4, topo=8):
+    """
+    Angulo que deixa a projecao por coluna mais concentrada.
+
+    Busca em duas passadas (grossa e fina) sobre uma copia menor - o angulo
+    nao precisa de resolucao de pixel, so de meio grau.
+    """
+    pequena = cv2.resize(mascara, None, fx=fator, fy=fator,
+                         interpolation=cv2.INTER_NEAREST)
+
+    def nitidez(graus):
+        projecao = _cisalhar(pequena, float(np.tan(np.radians(graus)))).sum(0)
+        # Soma dos maiores valores: premia POUCAS colunas muito cheias.
+        return float(np.sort(projecao)[-topo:].sum())
+
+    grosso = max(np.linspace(-graus_max, graus_max, 13), key=nitidez)
+    # A busca fina fica presa na faixa configurada: sem o clamp, um passo
+    # grosso na ponta (-3) abriria a fina ate -3.5.
+    fino = max(np.clip(np.linspace(grosso - 0.5, grosso + 0.5, 9),
+                       -graus_max, graus_max), key=nitidez)
+    return float(np.tan(np.radians(fino))), float(fino)
+
+
+# ---------------------------------------------------------------------------
+# 3. Perfil por coluna e picos
+# ---------------------------------------------------------------------------
+
+
+def _perfil_colunas(mascara_reta, altura_min_frac, ponte_frac):
+    """
+    Fracao da altura coberta por cada coluna.
+
+    O fechamento costura falhas da linha (uma praga em cima dela, um trecho
+    apagado); a abertura exige que a coluna seja contigua por pelo menos
+    `altura_min_frac` da foto - e o que separa linha da grade de sujeira.
+    """
+    altura = mascara_reta.shape[0]
+    imagem = mascara_reta * 255
+    ponte = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (1, _impar(altura * ponte_frac, 3)))
+    imagem = cv2.morphologyEx(imagem, cv2.MORPH_CLOSE, ponte)
+    corrida = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (1, _impar(altura * altura_min_frac, 9)))
+    imagem = cv2.morphologyEx(imagem, cv2.MORPH_OPEN, corrida)
+    return (imagem > 0).sum(0).astype(np.float32) / altura
+
+
+def _picos(perfil, distancia_min, limiar):
+    """Grupos de colunas acima do limiar -> (centro, forca, inicio, fim)."""
+    acima = np.where(perfil > limiar)[0]
+    if len(acima) == 0:
+        return []
+    grupos = [[acima[0]]]
+    for coluna in acima[1:]:
+        if coluna - grupos[-1][-1] <= distancia_min:
+            grupos[-1].append(coluna)
         else:
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (span, 1))
-            linhas = cv2.morphologyEx(binario, cv2.MORPH_OPEN, kernel, iterations=1)
-            projecao = np.sum(linhas > 0, axis=1)
-
-        ultima_proj = projecao
-        ultima_img = linhas
-
-        if projecao.max() == 0:
-            span = int(span * 0.7)
-            continue
-
-        limiar = projecao.max() * limiar_frac
-        candidatos = np.where(projecao > limiar)[0]
-        if len(candidatos) < 2:
-            span = int(span * 0.7)
-            continue
-
-        grupos = [[candidatos[0]]]
-        for c in candidatos[1:]:
-            if c - grupos[-1][-1] <= min_dist:
-                grupos[-1].append(c)
-            else:
-                grupos.append([c])
-
-        picos = [(int(np.mean(g)), float(projecao[g].max())) for g in grupos]
-        if len(picos) >= 2:
-            return picos, span, projecao, linhas
-        span = int(span * 0.7)
-
-    return [], span, ultima_proj, ultima_img
+            grupos.append([coluna])
+    saida = []
+    for grupo in grupos:
+        grupo = np.array(grupo)
+        peso = perfil[grupo]
+        centro = float((grupo * peso).sum() / peso.sum())
+        saida.append((centro, float(peso.max()), int(grupo[0]), int(grupo[-1])))
+    return saida
 
 
-def detectar_crop_box(imagem_para_deteccao, margem=8, modo='so_vertical',
-                      span_v_inicial_frac=0.5, span_h_inicial_frac=0.5,
-                      span_minimo_frac=0.15, dilatar=True):
-    """Detecta crop box (retorna coordenadas em pixels E fracoes)."""
-    altura, largura = imagem_para_deteccao.shape[:2]
-    centro_y, centro_x = altura // 2, largura // 2
+# ---------------------------------------------------------------------------
+# 4. Escolha do par de linhas
+# ---------------------------------------------------------------------------
 
-    cinza = cv2.cvtColor(imagem_para_deteccao, cv2.COLOR_BGR2GRAY)
-    cinza = cv2.GaussianBlur(cinza, (3, 3), 0)
-    _, binario = cv2.threshold(cinza, 0, 255,
-                               cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    if dilatar:
-        kernel_d = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        binario = cv2.dilate(binario, kernel_d, iterations=1)
+def _fortes(picos, forca_relativa):
+    """
+    Picos que podem servir de BORDA do quadrante.
 
-    span_v_ini = int(altura * span_v_inicial_frac)
-    span_h_ini = int(largura * span_h_inicial_frac)
-    span_v_min = max(int(altura * span_minimo_frac), 30)
-    span_h_min = max(int(largura * span_minimo_frac), 30)
+    Dois cortes, e os dois importam:
+      * relativo - descarta o que e muito mais fraco que a melhor linha da
+        propria foto (sujeira, texto impresso na armadilha);
+      * absoluto - uma linha de grade de verdade atravessa a foto. Sem este
+        piso, uma foto fora de foco (sem grade nenhuma) fecha um "par" com
+        dois borroes e o recorte sai de qualquer lugar.
+    """
+    if not picos:
+        return []
+    piso = max(settings.RECORTE_FORCA_MINIMA,
+               forca_relativa * max(p[1] for p in picos))
+    return sorted((p for p in picos if p[1] >= piso), key=lambda p: p[0])
 
-    if modo in ('auto', 'so_vertical'):
-        picos_v, span_v_usado, proj_v, linhas_v_img = _detectar_linhas_em_eixo(
-            binario, 'vertical', span_v_ini, span_v_min)
-    else:
-        picos_v, span_v_usado, proj_v, linhas_v_img = [], 0, np.zeros(largura), np.zeros_like(binario)
 
-    if modo in ('auto', 'so_horizontal'):
-        picos_h, span_h_usado, proj_h, linhas_h_img = _detectar_linhas_em_eixo(
-            binario, 'horizontal', span_h_ini, span_h_min)
-    else:
-        picos_h, span_h_usado, proj_h, linhas_h_img = [], 0, np.zeros(altura), np.zeros_like(binario)
+def _par_central(picos, centro, minimo_px, maximo_px, forca_relativa):
+    """
+    Par de linhas CONSECUTIVAS com largura plausivel e meio mais central.
 
-    def melhor_pico(picos, lado, centro, margem_centro=30):
-        if lado == 'menor':
-            cands = [(p, f) for p, f in picos if p < centro - margem_centro]
-        else:
-            cands = [(p, f) for p, f in picos if p > centro + margem_centro]
-        return max(cands, key=lambda x: x[1])[0] if cands else None
+    Consecutivas e o ponto-chave: escolher "a linha mais forte de um lado" e
+    "a mais forte do outro" e o que fazia o recorte pular uma linha e
+    entregar dois quadrantes colados.
+    """
+    fortes = _fortes(picos, forca_relativa)
+    candidatos = [(a, b) for a, b in zip(fortes, fortes[1:])
+                  if minimo_px <= b[0] - a[0] <= maximo_px]
+    if not candidatos:
+        return None
+    return min(candidatos,
+               key=lambda ab: abs((ab[0][0] + ab[1][0]) / 2.0 - centro))
 
-    if modo == 'so_vertical':
-        y1, y2 = 0, altura
-    else:
-        ya = melhor_pico(picos_h, 'menor', centro_y)
-        yb = melhor_pico(picos_h, 'maior', centro_y)
-        y1 = (ya + margem) if ya is not None else 0
-        y2 = (yb - margem) if yb is not None else altura
 
-    if modo == 'so_horizontal':
-        x1, x2 = 0, largura
-    else:
-        xe = melhor_pico(picos_v, 'menor', centro_x)
-        xd = melhor_pico(picos_v, 'maior', centro_x)
-        x1 = (xe + margem) if xe is not None else 0
-        x2 = (xd - margem) if xd is not None else largura
+def _passo_da_grade(picos, minimo_px, maximo_px):
+    """
+    Largura tipica da celula neste eixo, medida entre linhas consecutivas.
 
-    suc_v = (modo == 'so_horizontal') or (x1 > 0 and x2 < largura and x2 > x1 + 50)
-    suc_h = (modo == 'so_vertical') or (y1 > 0 and y2 < altura and y2 > y1 + 50)
-    sucesso = suc_v and suc_h and (x2 > x1 + 50) and (y2 > y1 + 50)
+    Aqui NAO se filtra por forca: a faixa de largura ja rejeita vao que nao
+    seja de celula, e uma linha meio apagada continua marcando a posicao
+    certa. Filtrar por forca aqui foi o que fez o resgate por passo desistir
+    de fotos que tinham a informacao na mao.
+    """
+    ordenados = sorted(picos, key=lambda p: p[0])
+    vaos = [b[0] - a[0] for a, b in zip(ordenados, ordenados[1:])
+            if minimo_px <= b[0] - a[0] <= maximo_px]
+    return float(np.median(vaos)) if vaos else None
 
-    info = {
-        'sucesso': sucesso,
-        'picos_v': [p for p, _ in picos_v],
-        'picos_h': [p for p, _ in picos_h],
-        'span_v_usado': span_v_usado,
-        'span_h_usado': span_h_usado,
-        'crop_box_px': (y1, y2, x1, x2),
-        'crop_box_frac': (y1/altura, y2/altura, x1/largura, x2/largura),
-        'dim_deteccao': (altura, largura),
+
+def _par_por_passo(picos, centro, passo, minimo_px, maximo_px):
+    """
+    Reconstroi o par quando uma das linhas esta ocluida.
+
+    Ancora na linha visivel e projeta a rede da grade ate a celula que
+    contem o centro da foto. A celula pode cair parcialmente fora da foto -
+    e o caso legitimo de a camera ter enquadrado so um pedaco dela.
+
+    A ancora aqui e mais exigente que uma borda comum (RECORTE_FORCA_ANCORA
+    em vez de RECORTE_FORCA_MINIMA): o par inteiro vai ser deduzido dela, e
+    um borrao numa foto fora de foco nao pode virar a origem de um recorte.
+    """
+    if not passo or not (minimo_px <= passo <= maximo_px):
+        return None
+    fortes = [p for p in sorted(picos, key=lambda p: p[0])
+              if p[1] >= settings.RECORTE_FORCA_ANCORA]
+    if not fortes:
+        return None
+    melhor = None
+    for ancora in fortes:
+        salto = np.floor((centro - ancora[0]) / passo)
+        inicio = ancora[0] + salto * passo
+        fim = inicio + passo
+        distancia = abs((inicio + fim) / 2.0 - centro)
+        if melhor is None or distancia < melhor[0]:
+            # Linha sintetica: sem extensao real, inicio/fim colapsam no
+            # centro, e a confianca do par e a da ancora que a gerou.
+            forca = ancora[1]
+            melhor = (distancia,
+                      (inicio, forca, inicio, inicio),
+                      (fim, forca, fim, fim))
+    return (melhor[1], melhor[2]) if melhor else None
+
+
+# ---------------------------------------------------------------------------
+# 5. Deteccao de um eixo
+# ---------------------------------------------------------------------------
+
+
+def _detectar_eixo(canal, minimo_px, maximo_px, espessura_max, distancia_min,
+                   graus_max, niveis, forca_relativa, passo_externo=None):
+    """
+    Acha as duas linhas que delimitam a celula central ao longo do eixo X de
+    `canal`.
+
+    O eixo Y da foto e resolvido pela MESMA funcao, passando o canal
+    transposto: linha horizontal transposta e linha vertical. Um unico
+    caminho de codigo atende os dois eixos.
+
+    `passo_externo` e o passo ja medido no outro eixo. A celula e proxima de
+    quadrada, entao ele serve de estimativa aqui - e e o que salva o eixo em
+    que so uma das linhas aparece no enquadramento.
+    """
+    extensao = canal.shape[1]
+    centro = extensao / 2.0
+    mascara = _mascara_linhas(canal, espessura_max)
+    tangente, graus = _estimar_inclinacao(mascara, graus_max)
+    reta = _cisalhar(mascara, tangente)
+
+    picos, nivel, par, passo, origem = [], None, None, None, None
+    for altura_min_frac, limiar in niveis:
+        nivel = (altura_min_frac, limiar)
+        perfil = _perfil_colunas(reta, altura_min_frac,
+                                 settings.RECORTE_PONTE_FRAC)
+        picos = _picos(perfil, distancia_min, limiar)
+        par = _par_central(picos, centro, minimo_px, maximo_px,
+                           forca_relativa)
+        if par:
+            origem, passo = "par_direto", par[1][0] - par[0][0]
+            break
+
+    if par is None:
+        # Linha ocluida: recupera o passo e projeta a celula central.
+        # O passo do OUTRO eixo vem na frente: ele sai de um par de linhas
+        # que casou de verdade, enquanto o vao medido aqui pode ser entre
+        # duas linhas que sobreviveram por acaso ao nivel mais frouxo.
+        passo, origem = None, None
+        candidatos = ((passo_externo, "passo_do_outro_eixo"),
+                      (_passo_da_grade(picos, minimo_px, maximo_px),
+                       "passo_proprio"))
+        for tentativa, nome in candidatos:
+            par = _par_por_passo(picos, centro, tentativa, minimo_px, maximo_px)
+            if par:
+                passo, origem = tentativa, nome
+                break
+
+    return {
+        "par": par,
+        "picos": picos,
+        "passo": passo,
+        "tangente": tangente,
+        "graus": graus,
+        "nivel": nivel,
+        "origem": origem,
     }
-    return info
 
 
-def recortar_em_resolucao_cheia(caminho_imagem, fator_deteccao=0.25,
-                                margem=8, modo='so_vertical',
-                                span_v_inicial_frac=0.5,
-                                span_h_inicial_frac=0.5,
-                                span_minimo_frac=0.15, dilatar=True):
+def _bordas(eixo, extensao_perpendicular, margem_frac, extensao):
+    """
+    Converte o par de linhas em (inicio, fim) do recorte.
+
+    Corta a partir da BORDA DE DENTRO de cada linha - assim nem meia linha
+    entra no quadrante - e ainda abre uma folga proporcional a inclinacao: a
+    linha e reta no meio da foto, mas deriva ate |tan| * metade da dimensao
+    perpendicular nas pontas.
+    """
+    inicio_linha, fim_linha = eixo["par"]
+    margem = (extensao * margem_frac
+              + abs(eixo["tangente"]) * extensao_perpendicular / 2.0)
+    return (int(round(inicio_linha[3] + margem)),
+            int(round(fim_linha[2] - margem)))
+
+
+# ---------------------------------------------------------------------------
+# 6. Moldura (o que esta FORA da armadilha)
+# ---------------------------------------------------------------------------
+
+
+def _aparar_pontas(fracao_escura, fracao_min, corte_max):
+    """
+    (inicio, fim) apos jogar fora as pontas de moldura.
+
+    Corta ate a ponta MAIS FUNDA de moldura dentro da janela permitida, e
+    nao ate a primeira linha boa: a moldura costuma deixar uma fresta de
+    papel para fora da faixa preta, e parar nessa fresta era o que ainda
+    deixava um tarjao preto na entrega.
+    """
+    n = len(fracao_escura)
+    teto = int(n * corte_max)
+    moldura = [i for i in range(teto) if fracao_escura[i] >= fracao_min]
+    inicio = max(moldura) + 1 if moldura else 0
+    moldura = [i for i in range(max(inicio, n - teto), n)
+               if fracao_escura[i] >= fracao_min]
+    fim = min(moldura) if moldura else n
+    return inicio, fim
+
+
+def _cortar_moldura(imagem, y1, y2, x1, x2):
+    """
+    Apara, DENTRO do quadrante ja escolhido, as faixas PRETAS das pontas.
+
+    O alvo e especifico: a lateral da placa, o fundo do microscopio, a
+    sombra da moldura - tudo quase preto. O criterio e brilho, NAO "nao
+    parece papel de armadilha": uma folha caida sobre a borda tambem nao
+    parece papel, mas e conteudo do quadrante e nao pode ser cortada.
+
+    Duas travas seguram o resto: a linha precisa ser quase toda escura
+    (RECORTE_MOLDURA_FRACAO_MIN) e o corte nunca passa de
+    RECORTE_MOLDURA_CORTE_MAX_FRAC de cada ponta.
+    """
+    valor = cv2.cvtColor(
+        cv2.resize(imagem, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA),
+        cv2.COLOR_BGR2HSV)[..., 2]
+    escuro = valor < settings.RECORTE_MOLDURA_BRILHO_MAX
+
+    # A analise so enxerga o quadrante: o que acontece no quadrante vizinho
+    # nao pode encolher o nosso.
+    jy1, jx1 = y1 // 2, x1 // 2
+    janela = escuro[jy1:max(jy1 + 1, y2 // 2), jx1:max(jx1 + 1, x2 // 2)]
+    fracao_min = settings.RECORTE_MOLDURA_FRACAO_MIN
+    corte_max = settings.RECORTE_MOLDURA_CORTE_MAX_FRAC
+
+    # O aparo volta como RECUO de cada ponta, nao como coordenada absoluta:
+    # a janela foi medida na metade da escala e o arredondamento da divisao
+    # por 2 comeria um pixel de cada lado mesmo sem nada a aparar.
+    altura_janela, largura_janela = janela.shape
+    inicio_y, fim_y = _aparar_pontas(janela.mean(1), fracao_min, corte_max)
+    inicio_x, fim_x = _aparar_pontas(janela.mean(0), fracao_min, corte_max)
+    return (y1 + inicio_y * 2, y2 - (altura_janela - fim_y) * 2,
+            x1 + inicio_x * 2, x2 - (largura_janela - fim_x) * 2)
+
+
+# ---------------------------------------------------------------------------
+# Deteccao
+# ---------------------------------------------------------------------------
+
+
+def detectar_crop_box(imagem_para_deteccao, perfil=None, margem_frac=None,
+                      cortar_moldura=None, forca_relativa=None, eixos=None):
+    """
+    Descobre o quadrante central. Retorna coordenadas em pixels E em fracoes.
+
+    perfil          'auto' (default), 'amarela' ou 'azul'. So aperta a faixa
+                    de largura aceita para o quadrante - o algoritmo e o
+                    mesmo nos tres.
+    eixos           'ambos' (default) recorta tambem no eixo vertical, o que
+                    tira a linha horizontal da grade e as tiras dos
+                    quadrantes de cima e de baixo. 'so_vertical' recorta so
+                    as laterais e entrega a altura inteira da foto.
+    margem_frac     folga interna, em fracao da largura, aplicada a partir da
+                    BORDA de dentro de cada linha.
+    cortar_moldura  apara as faixas de borda que nao sao papel da armadilha.
+    forca_relativa  quao fraco um pico pode ser, em relacao ao mais forte,
+                    para ainda contar como linha da grade.
+    """
+    perfil_cor = resolver_perfil(perfil)
+    margem_frac = (settings.RECORTE_MARGEM_FRAC if margem_frac is None
+                   else margem_frac)
+    cortar_moldura = (settings.RECORTE_CORTAR_MOLDURA if cortar_moldura is None
+                      else cortar_moldura)
+    forca_relativa = (settings.RECORTE_FORCA_RELATIVA if forca_relativa is None
+                      else forca_relativa)
+    eixos = str(settings.RECORTE_EIXOS if eixos is None else eixos).lower()
+
+    altura, largura = imagem_para_deteccao.shape[:2]
+    canal = cv2.medianBlur(
+        cv2.cvtColor(imagem_para_deteccao, cv2.COLOR_BGR2HSV)[..., 2], 5)
+
+    # A celula e proxima de quadrada, entao os limites de tamanho valem nos
+    # dois eixos - sempre em pixels, sempre derivados da largura da foto.
+    minimo_px = perfil_cor["largura_min_frac"] * largura
+    maximo_px = perfil_cor["largura_max_frac"] * largura
+    comuns = dict(
+        espessura_max=_impar(largura * settings.RECORTE_ESPESSURA_MAX_FRAC, 15),
+        distancia_min=max(10, int(largura * settings.RECORTE_DISTANCIA_MIN_FRAC)),
+        graus_max=settings.RECORTE_INCLINACAO_MAX_GRAUS,
+        niveis=settings.RECORTE_NIVEIS,
+        forca_relativa=forca_relativa,
+    )
+
+    eixo_x = _detectar_eixo(canal, minimo_px, maximo_px, **comuns)
+
+    # Transposta: a linha horizontal vira vertical e cai no mesmo detector.
+    # O eixo Y roda tambem no modo 'so_vertical' quando X falhou, porque a
+    # celula e proxima de quadrada e a linha horizontal costuma sobreviver
+    # justamente nas fotos em que a vertical ficou coberta (folha, sujeira).
+    eixo_y = None
+    if eixos == "ambos" or eixo_x["par"] is None:
+        eixo_y = _detectar_eixo(np.ascontiguousarray(canal.T),
+                                minimo_px, maximo_px,
+                                passo_externo=eixo_x["passo"], **comuns)
+        if eixo_x["par"] is None and eixo_y["passo"]:
+            # Segunda chance para X, agora com o passo vindo de Y.
+            eixo_x = _detectar_eixo(canal, minimo_px, maximo_px,
+                                    passo_externo=eixo_y["passo"], **comuns)
+
+    sucesso = eixo_x["par"] is not None
+    x1, x2 = (_bordas(eixo_x, altura, margem_frac, largura) if sucesso
+              else (0, largura))
+    y1, y2 = 0, altura
+    if eixos == "ambos" and eixo_y and eixo_y["par"] is not None:
+        y1, y2 = _bordas(eixo_y, largura, margem_frac, largura)
+
+    if cortar_moldura:
+        y1, y2, x1, x2 = _cortar_moldura(imagem_para_deteccao, y1, y2, x1, x2)
+
+    x1, x2 = max(0, min(x1, largura)), max(0, min(x2, largura))
+    y1, y2 = max(0, min(y1, altura)), max(0, min(y2, altura))
+    if x2 - x1 < 50 or y2 - y1 < 50:
+        sucesso = False
+        y1, y2, x1, x2 = 0, altura, 0, largura
+
+    return {
+        "sucesso": sucesso,
+        "perfil": perfil_cor["nome"],
+        "eixos": eixos,
+        "origem": eixo_x["origem"] if sucesso else None,
+        "origem_y": eixo_y["origem"] if eixo_y else None,
+        "nivel": eixo_x["nivel"],
+        "inclinacao_graus": round(eixo_x["graus"], 3),
+        "passo": (round(eixo_x["passo"], 1) if eixo_x["passo"] else None),
+        "picos_v": [int(round(p[0])) for p in eixo_x["picos"]],
+        "forcas_v": [round(p[1], 3) for p in eixo_x["picos"]],
+        "picos_h": ([int(round(p[0])) for p in eixo_y["picos"]] if eixo_y else []),
+        "forca_par": (round(min(eixo_x["par"][0][1], eixo_x["par"][1][1]), 3)
+                      if eixo_x["par"] else None),
+        "crop_box_px": (y1, y2, x1, x2),
+        "crop_box_frac": (y1 / altura, y2 / altura, x1 / largura, x2 / largura),
+        "dim_deteccao": (altura, largura),
+    }
+
+
+def recortar_em_resolucao_cheia(caminho_imagem, fator_deteccao=None, perfil=None,
+                                margem_frac=None, cortar_moldura=None,
+                                forca_relativa=None):
     """
     Pipeline em 2 etapas:
     1. Detecta crop box em versao reduzida (rapido)
     2. Aplica crop na imagem original em resolucao cheia (preserva qualidade)
     """
+    fator_deteccao = (settings.RECORTE_FATOR_DETECCAO if fator_deteccao is None
+                      else fator_deteccao)
+
     imagem_cheia = cv2.imread(str(caminho_imagem))
     if imagem_cheia is None:
         # Resgate para caminhos com acentos no Windows.
@@ -187,40 +542,48 @@ def recortar_em_resolucao_cheia(caminho_imagem, fator_deteccao=0.25,
 
     h_cheia, w_cheia = imagem_cheia.shape[:2]
 
+    # O fator e calibrado para foto de microscopio (9600 px de largura). Numa
+    # foto menor ele deixaria a linha da grade com menos de um pixel e a
+    # deteccao falharia sem motivo, entao ele afrouxa ate a largura minima de
+    # trabalho. Nunca AMPLIA a imagem: o teto e 1.0.
+    fator_deteccao = min(1.0, max(
+        fator_deteccao, settings.RECORTE_LARGURA_MINIMA_DETECCAO / max(1, w_cheia)))
+
     img_reduzida = cv2.resize(imagem_cheia, None,
                               fx=fator_deteccao, fy=fator_deteccao,
                               interpolation=cv2.INTER_AREA)
 
     info = detectar_crop_box(
         img_reduzida,
-        margem=margem,
-        modo=modo,
-        span_v_inicial_frac=span_v_inicial_frac,
-        span_h_inicial_frac=span_h_inicial_frac,
-        span_minimo_frac=span_minimo_frac,
-        dilatar=dilatar,
+        perfil=perfil,
+        margem_frac=margem_frac,
+        cortar_moldura=cortar_moldura,
+        forca_relativa=forca_relativa,
     )
 
-    if not info['sucesso']:
-        del img_reduzida
-        gc.collect()
-        info['dim_original'] = (h_cheia, w_cheia)
-        return imagem_cheia, info
-
-    frac_y1, frac_y2, frac_x1, frac_x2 = info['crop_box_frac']
+    frac_y1, frac_y2, frac_x1, frac_x2 = info["crop_box_frac"]
     y1_cheia = int(frac_y1 * h_cheia)
     y2_cheia = int(frac_y2 * h_cheia)
     x1_cheia = int(frac_x1 * w_cheia)
     x2_cheia = int(frac_x2 * w_cheia)
+
+    info["dim_original"] = (h_cheia, w_cheia)
+    inteira = (y1_cheia, y2_cheia, x1_cheia, x2_cheia) == (0, h_cheia, 0, w_cheia)
+
+    if not info["sucesso"] and inteira:
+        # Deteccao falhou e nao houve nem aparo de moldura: devolve a foto
+        # inteira, como no comportamento validado no Colab.
+        del img_reduzida
+        gc.collect()
+        return imagem_cheia, info
 
     recortada_cheia = imagem_cheia[y1_cheia:y2_cheia, x1_cheia:x2_cheia].copy()
 
     del imagem_cheia, img_reduzida
     gc.collect()
 
-    info['crop_box_cheia_px'] = (y1_cheia, y2_cheia, x1_cheia, x2_cheia)
-    info['dim_original'] = (h_cheia, w_cheia)
-    info['dim_recortada'] = recortada_cheia.shape[:2]
+    info["crop_box_cheia_px"] = (y1_cheia, y2_cheia, x1_cheia, x2_cheia)
+    info["dim_recortada"] = recortada_cheia.shape[:2]
     return recortada_cheia, info
 
 
@@ -237,12 +600,10 @@ def processar_foto(
     formato: str | None = None,
     lote_id: str | None = None,
     fator_deteccao: float | None = None,
-    margem: int | None = None,
-    modo: str | None = None,
-    span_v_inicial_frac: float | None = None,
-    span_h_inicial_frac: float | None = None,
-    span_minimo_frac: float | None = None,
-    dilatar: bool | None = None,
+    perfil: str | None = None,
+    margem_frac: float | None = None,
+    cortar_moldura: bool | None = None,
+    forca_relativa: float | None = None,
     nome_saida: str | None = None,
     pular_existentes: bool | None = None,
     mover_falhas: bool = True,
@@ -250,9 +611,12 @@ def processar_foto(
     """
     Recorta UMA foto e grava o quadrante em pasta_saida.
 
+    perfil           cor da armadilha ('auto', 'amarela', 'azul'). 'auto'
+                     atende as duas; os nomeados so apertam a faixa de
+                     largura aceita, para lotes em que o 'auto' hesita.
     nome_saida       nome do arquivo de saida SEM extensao. E por aqui que a
                      renomeacao acontece quando ela nao materializa a pasta
-                     02_renomeadas: o quadrante ja nasce como VARD0.png
+                     02_renomeadas: o quadrante ja nasce como VARD1.png
                      (ou a1.png), sem copiar o lote inteiro antes.
     pular_existentes se o quadrante de destino ja existe, nao reprocessa -
                      retomar um lote interrompido custa so o que faltava.
@@ -299,17 +663,11 @@ def processar_foto(
 
         recortada, info = recortar_em_resolucao_cheia(
             str(caminho_entrada),
-            fator_deteccao=(settings.RECORTE_FATOR_DETECCAO
-                            if fator_deteccao is None else fator_deteccao),
-            margem=(settings.RECORTE_MARGEM if margem is None else margem),
-            modo=(settings.RECORTE_MODO if modo is None else modo),
-            span_v_inicial_frac=(settings.RECORTE_SPAN_V_INICIAL_FRAC
-                                 if span_v_inicial_frac is None else span_v_inicial_frac),
-            span_h_inicial_frac=(settings.RECORTE_SPAN_H_INICIAL_FRAC
-                                 if span_h_inicial_frac is None else span_h_inicial_frac),
-            span_minimo_frac=(settings.RECORTE_SPAN_MINIMO_FRAC
-                              if span_minimo_frac is None else span_minimo_frac),
-            dilatar=(settings.RECORTE_DILATAR if dilatar is None else dilatar),
+            fator_deteccao=fator_deteccao,
+            perfil=perfil,
+            margem_frac=margem_frac,
+            cortar_moldura=cortar_moldura,
+            forca_relativa=forca_relativa,
         )
 
         if recortada is None:
@@ -347,9 +705,10 @@ def processar_foto(
         resultado["saida"] = str(caminho_saida)
         resultado["sucesso"] = True
         logger.debug(
-            "%s -> %s | original %s -> recortada %s",
+            "%s -> %s | original %s -> recortada %s | origem=%s inclinacao=%s",
             caminho_entrada.name, caminho_saida.name,
             info.get("dim_original"), info.get("dim_recortada"),
+            info.get("origem"), info.get("inclinacao_graus"),
         )
     except Exception as exc:  # nenhuma foto pode derrubar o lote
         resultado["erro"] = f"{type(exc).__name__}: {exc}"

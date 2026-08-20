@@ -9,6 +9,7 @@ Uso:
     python scripts/run_apenas_recorte.py
     python scripts/run_apenas_recorte.py --entrada data/02_renomeadas --workers 6
     python scripts/run_apenas_recorte.py --formato tiff --retomar
+    python scripts/run_apenas_recorte.py --entrada data/azuis --perfil azul
 """
 
 from __future__ import annotations
@@ -41,6 +42,11 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="numero de processos paralelos (default: CPUs - 1)")
     parser.add_argument("--formato", choices=list(FORMATOS_VALIDOS), default=None,
                         help="formato dos quadrantes recortados")
+    parser.add_argument("--perfil", choices=list(settings.RECORTE_PERFIS),
+                        default=None,
+                        help="cor da armadilha: auto atende amarela e azul "
+                             "(padrao); amarela/azul travam a faixa esperada "
+                             "do quadrante num lote dificil")
     parser.add_argument("--limite", type=int, default=None,
                         help="processa apenas as N primeiras fotos")
     parser.add_argument("--retomar", dest="pular_existentes", action="store_true",
@@ -64,6 +70,7 @@ def main() -> int:
         lote_id=args.lote_id,
         workers=args.workers,
         formato=args.formato,
+        perfil=args.perfil,
         limite=args.limite,
         pular_existentes=args.pular_existentes,
         limpar_saida=args.limpar_saida,

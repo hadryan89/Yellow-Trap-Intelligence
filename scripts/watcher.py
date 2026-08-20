@@ -295,6 +295,7 @@ def loop(args) -> int:
         modo=args.modo,
         workers=args.workers,
         formato=args.formato,
+        perfil=args.perfil,
         estrategia_renomeacao=args.estrategia,
         continuar_numeracao=args.continuar,
         pular_existentes=args.pular_existentes,
@@ -405,7 +406,7 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
                         default=settings.MODO_PADRAO,
-                        help="grid = a1..d10 | sequencial = VARD0 | "
+                        help="grid = a1..d10 | sequencial = VARD1 | "
                              "recorte = mantem o nome de origem")
     parser.add_argument("--tamanho-lote", type=int,
                         default=settings.QUANTIDADE_ESPERADA,
@@ -416,6 +417,11 @@ def construir_parser() -> argparse.ArgumentParser:
     parser.add_argument("--formato", choices=list(FORMATOS_VALIDOS),
                         default=None,
                         help="formato dos quadrantes recortados")
+    parser.add_argument("--perfil", choices=list(settings.RECORTE_PERFIS),
+                        default=None,
+                        help="cor da armadilha: auto atende amarela e azul "
+                             "(padrao); amarela/azul travam a faixa esperada "
+                             "do quadrante num lote dificil")
     parser.add_argument("--materializar", dest="estrategia",
                         choices=list(settings.ESTRATEGIAS_VALIDAS), default=None,
                         help="como gravar 02_renomeadas (virtual = nao grava)")

@@ -16,7 +16,7 @@ quadrantes, e mais nada.
 Modos (config/settings.py -> MODOS_VALIDOS):
 
     grid        a1..d10, ate 40 fotos por lote (comportamento historico)
-    sequencial  VARD0, VARD1, VARD2, ... sem limite de quantidade
+    sequencial  VARD1, VARD2, VARD3, ... sem limite de quantidade
     recorte     preserva o nome de origem
 
 Regras de robustez:
@@ -216,11 +216,12 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
 
     logger.info(
         "Recorte: %d foto(s), formato '%s', %d worker(s). Parametros: "
-        "fator_deteccao=%s margem=%s modo=%s span_v_ini=%s span_min=%s dilatar=%s",
+        "perfil=%s fator_deteccao=%s margem_frac=%s espessura_max_frac=%s "
+        "inclinacao_max=%s graus cortar_moldura=%s",
         len(itens), formato, workers,
-        settings.RECORTE_FATOR_DETECCAO, settings.RECORTE_MARGEM,
-        settings.RECORTE_MODO, settings.RECORTE_SPAN_V_INICIAL_FRAC,
-        settings.RECORTE_SPAN_MINIMO_FRAC, settings.RECORTE_DILATAR,
+        opcoes.perfil, settings.RECORTE_FATOR_DETECCAO,
+        settings.RECORTE_MARGEM_FRAC, settings.RECORTE_ESPESSURA_MAX_FRAC,
+        settings.RECORTE_INCLINACAO_MAX_GRAUS, settings.RECORTE_CORTAR_MOLDURA,
     )
 
     def agregar(indice: int, resultado: dict) -> None:
@@ -251,6 +252,7 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
             reter_resultados=reter_resultados,
             pasta_saida=str(pasta_saida),
             formato=formato,
+            perfil=opcoes.perfil,
             lote_id=sumario.lote_id,
             pular_existentes=opcoes.pular_existentes,
             # So movemos para _falhas o que esta numa pasta intermediaria

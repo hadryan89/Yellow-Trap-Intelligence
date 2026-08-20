@@ -21,6 +21,7 @@ def test_defaults_vem_de_settings():
     assert opcoes.pasta_entrada == settings.PASTA_ENTRADA
     assert opcoes.pasta_recortadas == settings.PASTA_RECORTADAS
     assert opcoes.formato == settings.RECORTE_FORMATO_SAIDA
+    assert opcoes.perfil == settings.RECORTE_PERFIL_PADRAO
 
 
 def test_nenhum_modo_duplica_o_lote_por_padrao():
@@ -59,12 +60,27 @@ def test_modo_recorte_nao_renomeia():
     ("modo", "montar_placa"),
     ("formato", "webp"),
     ("estrategia_renomeacao", "teletransporte"),
+    ("perfil", "verde"),
     ("limite", 0),
     ("digitos", 0),
 ])
 def test_valores_invalidos_estouram_na_construcao(campo, valor):
     with pytest.raises(ValueError):
         OpcoesProcessamento(**{campo: valor})
+
+
+def test_perfil_da_armadilha_e_normalizado():
+    """A cor pode chegar de um formulario ou de um JSON - aceita ' AZUL '."""
+    assert OpcoesProcessamento(perfil=" AZUL ").perfil == "azul"
+
+
+def test_perfil_aparece_no_resumo_do_lote():
+    """
+    Quem le o log precisa saber com que perfil o lote rodou: e a primeira
+    coisa a conferir quando um lote sai com recorte estranho.
+    """
+    linhas = " ".join(OpcoesProcessamento(perfil="azul").linhas_resumo())
+    assert "Armadilha" in linhas and "azul" in linhas
 
 
 def test_limpar_saida_com_retomada_e_contraditorio():

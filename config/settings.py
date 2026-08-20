@@ -61,7 +61,7 @@ PASTAS_OBRIGATORIAS = [
 #
 #   grid       -> comportamento historico: renomeia para o grid da placa
 #                 (a1..d10, ate QUANTIDADE_ESPERADA fotos) e recorta.
-#   sequencial -> renomeia para VARD0, VARD1, VARD2, ... sem limite de
+#   sequencial -> renomeia para VARD1, VARD2, VARD3, ... sem limite de
 #                 quantidade, e recorta. Modo indicado para lotes grandes.
 #   recorte    -> nao renomeia nada: recorta preservando o nome de origem.
 MODO_GRID = "grid"
@@ -70,18 +70,19 @@ MODO_RECORTE = "recorte"
 MODOS_VALIDOS = (MODO_GRID, MODO_SEQUENCIAL, MODO_RECORTE)
 MODO_PADRAO = MODO_GRID
 
-# --- Modo sequencial (VARD0, VARD1, VARD2, ...) ---
+# --- Modo sequencial (VARD1, VARD2, VARD3, ...) ---
 SEQUENCIAL_PREFIXO = "VARD"
 # Largura MINIMA do contador, preenchida com zeros a esquerda.
-#   1 -> VARD0, VARD1, ... VARD10, VARD100  (sem zeros; e o padrao)
-#   7 -> VARD0000000, VARD0000001, ...      (nomes de largura fixa)
+#   1 -> VARD1, VARD2, ... VARD10, VARD100  (sem zeros; e o padrao)
+#   7 -> VARD0000001, VARD0000002, ...      (nomes de largura fixa)
 # Com 1, o contador nunca e truncado: passando de 9 o nome simplesmente
 # cresce (VARD10). A ordenacao do pipeline e natural, entao VARD2 continua
 # vindo antes de VARD10 - so a ordenacao alfabetica pura (de alguns
 # programas externos) e que embaralharia. Se isso importar no seu fluxo,
 # use uma largura fixa aqui.
 SEQUENCIAL_DIGITOS = 1
-SEQUENCIAL_INICIO = 0  # a primeira foto do lote vira VARD0
+# A contagem comeca em 1: o primeiro quadrante do lote e VARD1, nao VARD0.
+SEQUENCIAL_INICIO = 1
 # True  -> a numeracao continua de onde parou (le o maior indice ja existente
 #          na pasta de saida). Essencial quando o sistema recebe varios envios
 #          que precisam entrar no mesmo acervo sem colidir.
@@ -148,22 +149,125 @@ RENOMEACAO_VERIFICAR_ZIP = True  # so tem efeito se RENOMEACAO_CRIAR_ZIP = True
 RENOMEACAO_LIMPAR_DESTINO = True
 
 # ---------------------------------------------------------------------------
-# Protocolo 2 - Recorte  |  VALIDADO NO COLAB - NAO ALTERAR
+# Protocolo 2 - Recorte  |  CALIBRACAO - ver src/recorte.py antes de mexer
 # ---------------------------------------------------------------------------
-RECORTE_FATOR_DETECCAO = 0.25
-RECORTE_MARGEM = 8
-RECORTE_MODO = "so_vertical"
-RECORTE_SPAN_V_INICIAL_FRAC = 0.5
-RECORTE_SPAN_H_INICIAL_FRAC = 0.5
-RECORTE_SPAN_MINIMO_FRAC = 0.15
-RECORTE_DILATAR = True
+# Estes valores foram medidos sobre os dois acervos reais (65 fotos de
+# armadilha AZUL e 40 de AMARELA). A referencia de "esta calibrado" e o
+# desvio-padrao da largura do quadrante entregue: com estes numeros ele fica
+# abaixo de 1% em cada cor. Alterou algo aqui? rode
+# `pytest tests/test_recorte_acervo.py` antes de subir.
+
+# A deteccao roda numa copia reduzida da foto. 0.125 sobre 9600x5400 da uma
+# imagem de 1200x675 - resolucao de sobra para linha de grade, e ~4x mais
+# barato que 0.25. Os parametros abaixo sao todos FRACIONARIOS justamente
+# para acompanhar este fator, mas a calibracao foi MEDIDA em 0.125: mudou o
+# fator, revalide com `pytest tests/test_recorte_acervo.py`.
+RECORTE_FATOR_DETECCAO = 0.125
+# Piso de largura da copia de deteccao, em pixels. Numa foto menor que a do
+# microscopio o fator afrouxa sozinho ate chegar aqui - senao a linha da
+# grade ficaria com menos de um pixel e a deteccao falharia sem motivo.
+# 9600 x 0.125 = 1200, entao o piso nao mexe no caso de producao.
+RECORTE_LARGURA_MINIMA_DETECCAO = 900
+
+# Folga interna, em fracao da largura, contada a partir da borda de dentro de
+# cada linha da grade. Garante que nenhum pedaco da linha entre no quadrante.
+RECORTE_MARGEM_FRAC = 0.004
+
+# Em quais eixos recortar.
+#   ambos       -> recorta os 4 lados no quadrante. A celula da grade e
+#                  menor que a altura da foto (9600x5400 para celula de
+#                  ~4400), entao sem isto a linha horizontal da grade e as
+#                  tiras dos quadrantes de cima e de baixo ficam dentro da
+#                  entrega. E o padrao.
+#   so_vertical -> recorta so as laterais e devolve a altura inteira da foto
+#                  (comportamento historico). Util se o proximo estagio ja
+#                  contava com a altura cheia.
+# Em 'ambos', quando o eixo vertical nao pode ser determinado (nenhuma linha
+# horizontal no enquadramento), a altura cheia e mantida - nunca piora.
+RECORTE_EIXO_AMBOS = "ambos"
+RECORTE_EIXO_SO_VERTICAL = "so_vertical"
+RECORTE_EIXOS_VALIDOS = (RECORTE_EIXO_AMBOS, RECORTE_EIXO_SO_VERTICAL)
+RECORTE_EIXOS = RECORTE_EIXO_AMBOS
+
 RECORTE_FORMATO_SAIDA = "png"  # 'png' | 'tiff' | 'jpg_max'
 # Espelhado em src/exportacao.py (_EXTENSOES) - ha teste conferindo os dois.
 RECORTE_FORMATOS_VALIDOS = ("png", "tiff", "jpg_max")
 
-# Parametros internos do detector de linhas (tambem validados no Colab).
-RECORTE_LIMIAR_FRAC = 0.25
-RECORTE_MIN_DIST = 30
+# --- Perfis de armadilha ---------------------------------------------------
+# O ALGORITMO E O MESMO para todas as cores: o detector nao olha matiz, olha
+# geometria. O perfil so aperta a faixa de largura aceita para o quadrante,
+# e serve de trava extra quando um lote e dificil (muita oclusao, foto
+# tremida). Medido nos acervos: azul 0.464-0.482 da largura da foto,
+# amarela 0.525-0.560.
+#
+#   auto     -> aceita as duas (e qualquer armadilha nova na mesma faixa)
+#   amarela  -> so aceita quadrante de armadilha amarela
+#   azul     -> so aceita quadrante de armadilha azul
+RECORTE_PERFIL_PADRAO = "auto"
+RECORTE_PERFIS = {
+    "auto":    {"largura_min_frac": 0.30, "largura_max_frac": 0.68},
+    "amarela": {"largura_min_frac": 0.45, "largura_max_frac": 0.65},
+    "azul":    {"largura_min_frac": 0.38, "largura_max_frac": 0.56},
+}
+
+# --- Realce das linhas (blackhat) ------------------------------------------
+# Largura maxima de uma linha da grade, em fracao da largura da foto. O
+# kernel do blackhat precisa ser MAIOR que a linha (para ela responder) e
+# MENOR que qualquer mancha escura larga (para ela NAO responder).
+RECORTE_ESPESSURA_MAX_FRAC = 0.04
+# Limiar de binarizacao do blackhat: metade do percentil 99 da resposta, com
+# um piso absoluto para fotos praticamente vazias (onde o percentil colapsa).
+RECORTE_BLACKHAT_PERCENTIL = 99.0
+RECORTE_BLACKHAT_FATOR = 0.5
+RECORTE_BLACKHAT_PISO = 10
+
+# --- Correcao de inclinacao ------------------------------------------------
+# Giro maximo procurado, em graus. As fotos reais ficam entre -2 e +2; 3 da
+# margem sem deixar a busca cara nem ambigua.
+RECORTE_INCLINACAO_MAX_GRAUS = 3.0
+
+# --- Perfil por coluna -----------------------------------------------------
+# Falha de ate 4% da altura dentro da linha e costurada antes de medir (uma
+# praga em cima da linha, um trecho de impressao apagado).
+RECORTE_PONTE_FRAC = 0.04
+# Duas colunas mais proximas que isto (fracao da largura) sao o MESMO pico.
+RECORTE_DISTANCIA_MIN_FRAC = 0.02
+# Niveis (altura_minima_da_linha, cobertura_minima_da_coluna), do mais duro
+# ao mais frouxo. Para no primeiro que ja produz um par valido - assim uma
+# foto limpa nunca paga o preco (em falsos positivos) de uma foto ocluida.
+RECORTE_NIVEIS = (
+    (0.55, 0.50),
+    (0.40, 0.40),
+    (0.28, 0.30),
+    (0.18, 0.22),
+)
+# Um pico com menos que esta fracao da forca do melhor e sujeira, nao linha.
+RECORTE_FORCA_RELATIVA = 0.55
+# E, em absoluto, uma borda de quadrante precisa cobrir pelo menos esta
+# fracao da altura da foto. Medido no acervo, o par escolhido nunca ficou
+# abaixo de 0.48 - 0.35 da folga e ainda barra foto fora de foco, onde os
+# 'picos' nao passam de 0.29.
+RECORTE_FORCA_MINIMA = 0.35
+# Quando UMA das linhas esta ocluida, o par e deduzido da outra mais o
+# passo da grade. A linha que serve de ancora nesse caso precisa ser mais
+# convincente que uma borda comum - o recorte inteiro sai dela.
+RECORTE_FORCA_ANCORA = 0.55
+
+# --- Aparo da moldura ------------------------------------------------------
+# As faixas de borda que nao sao papel da armadilha (fundo do microscopio,
+# sombra da moldura) saem do quadrante: sao pretas e so atrapalham a
+# inferencia seguinte.
+RECORTE_CORTAR_MOLDURA = True
+# O alvo e a faixa PRETA (lateral da placa, fundo do microscopio, sombra):
+# pixel mais escuro que isto nao e papel de armadilha nem conteudo util.
+# O criterio e brilho e nao cor de propria: uma folha caida sobre a borda
+# tambem nao parece papel, mas e conteudo do quadrante e nao pode ser cortada.
+RECORTE_MOLDURA_BRILHO_MAX = 45
+# So apara linha/coluna com pelo menos esta fracao de pixel escuro. Em 0.85 a
+# faixa preta sai inteira e uma sombra parcial na borda fica.
+RECORTE_MOLDURA_FRACAO_MIN = 0.85
+# E nunca apara mais que esta fracao de cada ponta.
+RECORTE_MOLDURA_CORTE_MAX_FRAC = 0.15
 
 # Quando a deteccao das linhas falha, o comportamento validado no Colab e
 # devolver a imagem CHEIA sem recorte. Mantido como default.

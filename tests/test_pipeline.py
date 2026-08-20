@@ -241,12 +241,12 @@ def test_modo_grid_com_mais_fotos_que_posicoes(pastas_isoladas, foto_valida,
 
 
 # ---------------------------------------------------------------------------
-# Modo sequencial (VARD0, VARD1, ...)
+# Modo sequencial (VARD1, VARD2, ...)
 # ---------------------------------------------------------------------------
 
 
 def test_modo_sequencial_renomeia_e_recorta(pastas_isoladas, foto_valida):
-    """Renomeia para VARD0, VARD1... e recorta, sem materializar 02_renomeadas."""
+    """Renomeia para VARD1, VARD2... e recorta, sem materializar 02_renomeadas."""
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida,
                     quantidade=12, prefixo="DSC")
 
@@ -257,9 +257,10 @@ def test_modo_sequencial_renomeia_e_recorta(pastas_isoladas, foto_valida):
     assert sumario.recortadas_ok == 12
 
     recortadas = pastas_isoladas["PASTA_RECORTADAS"]
-    # A numeracao comeca em 0 e nao leva zeros a esquerda: VARD0 .. VARD11.
+    # A numeracao comeca em 1 e nao leva zeros a esquerda: VARD1 .. VARD12.
     nomes = {p.name for p in recortadas.glob("*.png")}
-    assert nomes == {f"VARD{i}.png" for i in range(12)}
+    assert nomes == {f"VARD{i}.png" for i in range(1, 13)}
+    assert "VARD0.png" not in nomes
 
     # Estrategia virtual: nada foi copiado para 02_renomeadas...
     assert list(pastas_isoladas["PASTA_RENOMEADAS"].iterdir()) == []
@@ -268,7 +269,7 @@ def test_modo_sequencial_renomeia_e_recorta(pastas_isoladas, foto_valida):
 
 
 def test_modo_sequencial_respeita_a_ordem_natural(pastas_isoladas, foto_valida):
-    """DSC_2 tem que virar VARD1, e nao o ultimo numero do lote."""
+    """DSC_2 tem que virar VARD2, e nao o ultimo numero do lote."""
     entrada = pastas_isoladas["PASTA_ENTRADA"]
     dados = foto_valida.read_bytes()
     for nome in ["DSC_10.png", "DSC_2.png", "DSC_1.png"]:
@@ -279,11 +280,11 @@ def test_modo_sequencial_respeita_a_ordem_natural(pastas_isoladas, foto_valida):
                                    lote_id="LOTE_ORDEM"))
 
     renomeadas = pastas_isoladas["PASTA_RENOMEADAS"]
-    assert (renomeadas / "VARD0.png").exists()
     assert (renomeadas / "VARD1.png").exists()
     assert (renomeadas / "VARD2.png").exists()
+    assert (renomeadas / "VARD3.png").exists()
     # A ordem natural garante o de-para; conferido pelos bytes de origem.
-    assert (renomeadas / "VARD2.png").read_bytes() == \
+    assert (renomeadas / "VARD3.png").read_bytes() == \
            (entrada / "DSC_10.png").read_bytes()
 
 
@@ -301,7 +302,7 @@ def test_modo_sequencial_continua_a_numeracao(pastas_isoladas, foto_valida):
                                    continuar_numeracao=True, lote_id="ENVIO_2"))
 
     nomes = {p.name for p in pastas_isoladas["PASTA_RECORTADAS"].glob("*.png")}
-    assert nomes == {f"VARD{i}.png" for i in range(5)}
+    assert nomes == {f"VARD{i}.png" for i in range(1, 6)}
 
 
 def test_modo_sequencial_com_limite(pastas_isoladas, foto_valida):
@@ -344,7 +345,7 @@ def test_recorte_identico_em_todos_os_modos(pastas_isoladas, foto_valida,
     _povoar_entrada(entrada, foto_valida, quantidade=1, prefixo="UNICA")
 
     saidas = {}
-    for modo, nome in (("grid", "a1.png"), ("sequencial", "VARD0.png"),
+    for modo, nome in (("grid", "a1.png"), ("sequencial", "VARD1.png"),
                        ("recorte", "UNICA_001.png")):
         pasta = tmp_path / f"saida_{modo}"
         executar_processamento(_opcoes(pastas_isoladas, modo=modo,

@@ -82,17 +82,18 @@ def main() -> int:
     print("\n[2/3] Conferindo dependencias...")
     faltando, opcionais = conferir_dependencias()
 
-    print("\n[3/3] Conferindo parametros validados no Colab...")
+    print("\n[3/3] Conferindo a calibracao do recorte...")
     esperados = {
-        "RECORTE_FATOR_DETECCAO": 0.25,
-        "RECORTE_MARGEM": 8,
-        "RECORTE_MODO": "so_vertical",
-        "RECORTE_SPAN_V_INICIAL_FRAC": 0.5,
-        "RECORTE_SPAN_H_INICIAL_FRAC": 0.5,
-        "RECORTE_SPAN_MINIMO_FRAC": 0.15,
-        "RECORTE_DILATAR": True,
-        "RECORTE_LIMIAR_FRAC": 0.25,
-        "RECORTE_MIN_DIST": 30,
+        "RECORTE_FATOR_DETECCAO": 0.125,
+        "RECORTE_MARGEM_FRAC": 0.004,
+        "RECORTE_PERFIL_PADRAO": "auto",
+        "RECORTE_ESPESSURA_MAX_FRAC": 0.04,
+        "RECORTE_INCLINACAO_MAX_GRAUS": 3.0,
+        "RECORTE_PONTE_FRAC": 0.04,
+        "RECORTE_DISTANCIA_MIN_FRAC": 0.02,
+        "RECORTE_FORCA_RELATIVA": 0.55,
+        "RECORTE_FORCA_MINIMA": 0.35,
+        "RECORTE_CORTAR_MOLDURA": True,
         "QUANTIDADE_ESPERADA": 40,
     }
     divergentes = []
@@ -101,10 +102,12 @@ def main() -> int:
         if atual != esperado:
             divergentes.append(f"{nome}: {atual!r} (esperado {esperado!r})")
     if divergentes:
-        print(f"  {VERMELHO}ATENCAO - parametros alterados em relacao a calibracao "
-              f"do Colab:{RESET}")
+        print(f"  {VERMELHO}ATENCAO - parametros alterados em relacao a "
+              f"calibracao medida no acervo:{RESET}")
         for linha in divergentes:
             print(f"    - {linha}")
+        print("    Rode `pytest tests/test_recorte_acervo.py -m acervo` antes "
+              "de usar em producao.")
     else:
         print(f"  {VERDE}OK{RESET}    todos os parametros conferem com a calibracao.")
 

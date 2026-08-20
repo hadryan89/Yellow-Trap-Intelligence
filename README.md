@@ -1,8 +1,8 @@
 # YellowTrap Pipeline
 
-Processamento automatizado de imagens de armadilhas amarelas (YellowTrap) usadas
-na captura e identificação de pragas na lavoura — tripes, afídeos, cigarrinhas,
-mosca branca.
+Processamento automatizado de imagens de armadilhas adesivas — **amarelas e
+azuis** — usadas na captura e identificação de pragas na lavoura: tripes,
+afídeos, cigarrinhas, mosca branca.
 
 **VARD** · FATEC POMPEIA SHUNJI NISHIMURA ( POMPEIA/SP)
 
@@ -12,10 +12,32 @@ quadrante central de cada uma. A entrega final são os quadrantes limpos — a
 identificação das pragas por *deep learning* é uma etapa posterior, fora do
 escopo deste repositório.
 
-Os algoritmos e os parâmetros de calibração são os validados no Google Colab e
-**foram preservados exatamente**: o resultado do recorte é byte-a-byte idêntico
-ao da versão anterior deste pipeline, em qualquer modo de operação (há um teste
-que trava isso).
+### Uma única linha de comando para as duas cores
+
+O detector de grade **não olha a cor do papel, olha a geometria**. Amarela e
+azul passam pelo mesmo comando, sem flag nenhuma:
+
+```powershell
+python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_amarelas"
+python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_azuis"
+```
+
+Existe um `--perfil {auto,amarela,azul}` opcional, que **não muda o algoritmo**:
+ele só aperta a faixa de largura aceita para o quadrante, como trava extra num
+lote difícil. O default `auto` atende as duas.
+
+Medido sobre o acervo real (65 fotos azuis + 40 amarelas), com o critério que
+importa para a etapa seguinte — *nenhuma linha da grade dentro do quadrante
+entregue*:
+
+| | Versão anterior | Esta versão |
+|---|---|---|
+| Azuis com recorte limpo | 7 / 65 | **65 / 65** |
+| Amarelas com recorte limpo | 35 / 40 | **40 / 40** |
+| Dispersão da largura do quadrante (azul) | ±0,152 | **±0,010** |
+| Dispersão da largura do quadrante (amarela) | ±0,051 | **±0,009** |
+
+`tests/test_recorte_acervo.py` trava esses números contra as fotos reais.
 
 ---
 
@@ -46,13 +68,14 @@ que trava isso).
 ```
 data/01_entrada_bruta/     DSC0001.JPG ... DSC0040.JPG   (nomes da câmera)
         │
-        │  Etapa 1 — nomeação: monta o de-para (a1..d10 ou VARD0, VARD1...)
+        │  Etapa 1 — nomeação: monta o de-para (a1..d10 ou VARD1, VARD2...)
         │            SEM escrever nada em disco
         │
-        │  Etapa 2 — recorte do quadrante central (PARALELO, N processos)
+        │  Etapa 2 — recorte do quadrante central, nos 4 lados
+        │            (PARALELO, N processos)
         │            grava UM arquivo por foto, já com o nome final
         ▼
-data/03_recortadas/        a1.png … d10.png   ou   VARD0.png, VARD1.png …
+data/03_recortadas/        a1.png … d10.png   ou   VARD1.png, VARD2.png …
         │
         └─ data/_relatorios/<lote_id>/sumario.json
 
@@ -62,13 +85,35 @@ data/02_renomeadas/        vazia por padrão (ver "materialização" abaixo)
 **A montagem da placa (stitching) foi removida.** O pipeline termina nos
 quadrantes recortados.
 
+### Como o quadrante é encontrado
+
+A foto do microscópio pega o quadrante alvo **mais pedaços dos vizinhos**. O
+detector acha as linhas da grade impressa na armadilha e corta entre elas, nos
+quatro lados. Quatro decisões sustentam isso:
+
+| Etapa | O que faz | Por que |
+|---|---|---|
+| **Blackhat no brilho** | realça só faixas escuras **estreitas** | binarizar o cinza confundia "linha da grade" com "fundo escuro" — e o azul já é escuro em tons de cinza. Era essa a causa do recorte ruim nas azuis |
+| **Correção de inclinação** | busca tipo Radon, ±3° | 1° de giro já espalha a linha por dezenas de colunas e apaga o pico da projeção |
+| **Perfil por coluna, critério absoluto** | vale como linha a coluna coberta por ≥ X% da foto | "X% do pico mais forte" fazia sujeira virar linha quando a foto tinha pouca grade |
+| **Escolha geométrica do par** | entre linhas **consecutivas**, a de largura plausível e meio mais central | "a linha mais escura ganha" pulava uma linha e entregava dois quadrantes colados |
+
+Quando uma linha está ocluída (uma folha por cima, sujeira), o passo da grade é
+emprestado do outro eixo — a célula é próxima de quadrada. Se ainda assim não
+der, a foto sai inteira e marcada como *sem detecção*: o pipeline **nunca**
+inventa um recorte.
+
+O corte nos quatro lados importa: a célula da grade (~4400 px) é menor que a
+altura da foto (5400 px), então entregar a altura inteira deixava a linha
+horizontal e tiras dos quadrantes de cima e de baixo dentro do resultado.
+
 ### 1 foto de entrada = 1 arquivo de saída
 
 O lote **não** é replicado pelas pastas do pipeline. Jogue 30 fotos em
 `01_entrada_bruta/` e o resultado são 30 quadrantes em `03_recortadas/` — mais
 nada. Renomear não exige escrever um segundo lote em disco: o recorte **sempre**
 grava um arquivo novo, então o nome novo é aplicado direto nele e o quadrante já
-nasce como `VARD0.png`. É isso que a estratégia `virtual` faz, e ela é o
+nasce como `VARD1.png`. É isso que a estratégia `virtual` faz, e ela é o
 **default de todos os modos**.
 
 Se quiser mesmo ver as fotos renomeadas em `02_renomeadas/`, peça
@@ -95,14 +140,14 @@ arquivo de saída** — o recorte é bit-a-bit o mesmo.
 | Modo | Nomes gerados | Limite de fotos | Materialização default |
 |---|---|---|---|
 | `grid` | `a1, a2 … d10` (posição na placa) | 40 (as posições do grid) | `virtual` |
-| `sequencial` | `VARD0, VARD1, VARD2 …` | nenhum | `virtual` |
+| `sequencial` | `VARD1, VARD2, VARD3 …` | nenhum | `virtual` |
 | `recorte` | preserva o nome de origem | nenhum | `virtual` |
 
 ```powershell
 # O padrão de sempre: 40 fotos viram a1..d10 recortadas
 python scripts/run_pipeline.py --modo grid
 
-# Só renomear (VARD0, VARD1…) e recortar — para lotes de qualquer tamanho
+# Só renomear (VARD1, VARD2…) e recortar — para lotes de qualquer tamanho
 python scripts/run_pipeline.py --modo sequencial
 
 # Só recortar, mantendo os nomes
@@ -184,7 +229,7 @@ Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
 |---|---|
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
 | `python scripts/run_pipeline.py --modo grid` | padrão histórico: a1..d10 + recorte |
-| `python scripts/run_pipeline.py --modo sequencial` | VARD0, VARD1… + recorte, sem limite de quantidade |
+| `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte, sem limite de quantidade |
 | `python scripts/run_pipeline.py --simular` | mostra o plano de nomes sem gravar nada |
 | `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
 | `python scripts/watcher.py` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
@@ -316,7 +361,7 @@ from src.renomeacao import planejar_nomeacao
 from src.utils import listar_imagens
 
 plano = planejar_nomeacao(listar_imagens("D:/uploads/job_42"), modo="sequencial")
-plano.mapeamento   # [('DSC0001.JPG', 'VARD0.jpg'), ...]
+plano.mapeamento   # [('DSC0001.JPG', 'VARD1.jpg'), ...]
 ```
 
 Outras entradas úteis: `src.pipeline.processar_pasta(pasta, modo=...)`,
@@ -381,7 +426,7 @@ yellowtrap_pipeline/
 ├── src/
 │   ├── opcoes.py                OpcoesProcessamento (contrato de entrada)
 │   ├── renomeacao.py            Etapa 1 (plano de nomes + materialização)
-│   ├── recorte.py               Etapa 2 (detecção de grade + crop)
+│   ├── recorte.py               Etapa 2 (detecção de grade + crop, 4 lados)
 │   ├── exportacao.py            gravação dos quadrantes
 │   ├── paralelismo.py           wrapper de ProcessPoolExecutor
 │   ├── pipeline.py              orquestração das 2 etapas
@@ -400,10 +445,12 @@ yellowtrap_pipeline/
 │   ├── run_apenas_recorte.py
 │   └── watcher.py
 └── tests/
-    ├── fixtures/gerar_fixtures.py    gera as imagens sintéticas de teste
+    ├── fixtures/gerar_fixtures.py    gera as imagens sintéticas (amarela e azul)
+    ├── test_opcoes.py                contrato de entrada
     ├── test_renomeacao.py
-    ├── test_recorte.py
-    └── test_pipeline.py             integração + paralelismo + modos
+    ├── test_recorte.py               detecção da grade e crop
+    ├── test_recorte_acervo.py        regressão contra as fotos reais em data/
+    └── test_pipeline.py              integração + paralelismo + modos
 ```
 
 Nos módulos `src/`, os blocos marcados como
@@ -424,22 +471,38 @@ workers) fica em seções separadas, abaixo, e **não toca no miolo do algoritmo
 Todos os parâmetros vivem em **`config/settings.py`**. Nenhum outro arquivo tem
 número mágico.
 
-### Parâmetros calibrados — não altere
+### Parâmetros calibrados — não altere sem revalidar
+
+Foram **medidos sobre o acervo real** (65 fotos azuis + 40 amarelas). Todos são
+fracionários, então acompanham o tamanho da foto.
 
 ```python
-RECORTE_FATOR_DETECCAO       = 0.25         # detecção roda em 25% do tamanho
-RECORTE_MARGEM               = 8            # px afastados da linha detectada
-RECORTE_MODO                 = 'so_vertical'
-RECORTE_SPAN_V_INICIAL_FRAC  = 0.5
-RECORTE_SPAN_H_INICIAL_FRAC  = 0.5
-RECORTE_SPAN_MINIMO_FRAC     = 0.15
-RECORTE_DILATAR              = True
-RECORTE_LIMIAR_FRAC          = 0.25
-RECORTE_MIN_DIST             = 30
+RECORTE_FATOR_DETECCAO       = 0.125   # detecção roda em 12,5% do tamanho
+RECORTE_LARGURA_MINIMA_DETECCAO = 900  # piso, em px, da cópia de detecção
+RECORTE_MARGEM_FRAC          = 0.004   # folga a partir da beirada da linha
+RECORTE_EIXOS                = 'ambos' # recorta os 4 lados
+RECORTE_PERFIL_PADRAO        = 'auto'  # atende amarela e azul
+RECORTE_ESPESSURA_MAX_FRAC   = 0.04    # kernel do blackhat
+RECORTE_INCLINACAO_MAX_GRAUS = 3.0     # faixa da correção de inclinação
+RECORTE_PONTE_FRAC           = 0.04    # costura falhas dentro da linha
+RECORTE_DISTANCIA_MIN_FRAC   = 0.02    # duas colunas assim perto = 1 pico
+RECORTE_NIVEIS               = ((0.55, 0.50), (0.40, 0.40),
+                                (0.28, 0.30), (0.18, 0.22))
+RECORTE_FORCA_RELATIVA       = 0.55    # pico fraco demais = sujeira
+RECORTE_FORCA_MINIMA         = 0.35    # piso absoluto de uma borda
+RECORTE_FORCA_ANCORA         = 0.55    # piso da linha que deduz o par inteiro
+RECORTE_CORTAR_MOLDURA       = True    # apara o que não é papel da armadilha
 ```
 
-Há um teste (`test_parametros_de_calibracao_preservados`) que **quebra a suíte se
-qualquer um desses valores for alterado** — de propósito.
+Dois testes protegem esses valores: `test_parametros_de_calibracao_preservados`
+**quebra a suíte se qualquer um mudar** e `tests/test_recorte_acervo.py` refaz a
+medição contra as fotos reais. Mexeu em algo aqui? rode:
+
+```powershell
+python -m pytest tests/test_recorte_acervo.py
+```
+
+Ele é pulado automaticamente quando o acervo não está no disco.
 
 ### Parâmetros que você pode ajustar à vontade
 
@@ -447,12 +510,15 @@ qualquer um desses valores for alterado** — de propósito.
 |---|---|---|
 | `MODO_PADRAO` | `'grid'` | modo usado quando ninguém passa `--modo` |
 | `SEQUENCIAL_PREFIXO` | `'VARD'` | prefixo do nome sequencial |
-| `SEQUENCIAL_DIGITOS` | `1` | largura **mínima** do contador: `1` → `VARD0, VARD1, VARD10`; `7` → `VARD0000000…` |
-| `SEQUENCIAL_INICIO` | `0` | número da primeira foto do lote |
+| `SEQUENCIAL_DIGITOS` | `1` | largura **mínima** do contador: `1` → `VARD1, VARD2, VARD10`; `7` → `VARD0000001…` |
+| `SEQUENCIAL_INICIO` | `1` | número da primeira foto do lote — o acervo começa em `VARD1`, não existe `VARD0` |
 | `SEQUENCIAL_CONTINUAR_NUMERACAO` | `False` | continua a numeração do acervo existente |
 | `RENOMEACAO_ESTRATEGIA` | `virtual` em todos os modos | `virtual` / `hardlink` / `copiar` / `mover` — só `virtual` e `mover` não duplicam o lote |
 | `RENOMEACAO_VERIFICAR_MD5` | `True` | conferência da cópia (só afeta `copiar`) |
 | `RECORTE_FORMATO_SAIDA` | `'png'` | `png`, `tiff`, `jpg_max` |
+| `RECORTE_PERFIL_PADRAO` | `'auto'` | cor da armadilha: `auto` (as duas), `amarela`, `azul`. Só aperta a faixa de largura aceita |
+| `RECORTE_EIXOS` | `'ambos'` | `ambos` recorta os 4 lados; `so_vertical` devolve a altura inteira (comportamento histórico) |
+| `RECORTE_CORTAR_MOLDURA` | `True` | apara as pontas que não são papel da armadilha (fundo do microscópio, sombra) |
 | `RECORTE_PULAR_EXISTENTES` | `False` | retomada automática |
 | `LIMPAR_PASTAS_INTERMEDIARIAS` | `False` | esvazia `03_recortadas` antes do lote |
 | `NUM_WORKERS` | `None` | processos paralelos; `None` = CPUs − 1 |
@@ -577,10 +643,14 @@ python scripts/run_pipeline.py --modo sequencial --retomar
 ## Testes
 
 ```powershell
-python -m pytest                  # suíte completa (95 testes)
-python -m pytest -m "not lento"   # pula os testes de integração pesados
+python -m pytest                       # suíte completa
+python -m pytest -m "not lento"        # pula os testes pesados
+python -m pytest -m "not acervo"       # pula a regressão contra as fotos reais
 python -m pytest tests/test_recorte.py -v
 ```
+
+Os testes marcados `acervo` rodam sobre as fotos de verdade em `data/` e se
+**pulam sozinhos** quando elas não estão no disco (CI, clone limpo).
 
 As imagens de teste são **geradas** por `tests/fixtures/gerar_fixtures.py` na
 primeira execução — nada de binário no repositório.
@@ -590,10 +660,16 @@ primeira execução — nada de binário no repositório.
 - **o recorte é idêntico nos três modos** e igual ao do recorte avulso
   (`test_recorte_identico_em_todos_os_modos`) — mudar de modo muda o nome do
   arquivo e nada mais;
-- os **parâmetros de calibração** e os *defaults* das funções migradas
-  (comparados por `inspect.signature`);
-- a **detecção**: 4 picos encontrados, crop entre as duas linhas centrais, altura
-  preservada inteira no modo `so_vertical`;
+- os **parâmetros de calibração**, e que as funções públicas não têm default
+  duplicado no código (tudo resolve em `settings.py`);
+- **a cor não entra na conta**: a mesma geometria em amarelo e em azul tem que
+  dar o **mesmo crop box** (`test_amarela_e_azul_dao_o_mesmo_recorte`);
+- a **detecção**: crop entre as linhas da célula central nos dois eixos, linha
+  da grade fora do quadrante, linha de vizinho não vira borda, moldura preta
+  aparada, inclinação de 1,5° corrigida;
+- **regressão contra o acervo real** (`test_recorte_acervo.py`): toda foto de
+  armadilha vira quadrante, a largura entregue é consistente (desvio < 0,02) e
+  **nenhuma linha da grade sobra dentro do quadrante**;
 - **crop em resolução cheia**: a saída é bit-a-bit igual a `original[y1:y2, x1:x2]`;
 - **lossless**: PNG e TIFF relidos do disco batem exatamente com o array em memória;
 - **ordem natural** (`img2` antes de `img10`) e cópia byte-a-byte com MD5;
@@ -608,11 +684,18 @@ primeira execução — nada de binário no repositório.
   cópia não derruba a etapa, ordem dos resultados preservada no paralelismo,
   janela de submissão não perde item, retomada não reprocessa.
 
-### Equivalência com a versão anterior
+### Diferença em relação à versão anterior
 
-O resultado foi conferido nas 40 fotos reais de produção: os 40 quadrantes
-gerados por esta versão são **byte-a-byte idênticos** (MD5) aos gerados pela
-versão com stitching, tanto no modo `grid` quanto no `sequencial`.
+O enquadramento **mudou de propósito** — não é mais byte-a-byte igual ao da
+versão anterior, e não deveria ser:
+
+- o recorte agora acontece nos **quatro lados** (antes, só as laterais);
+- a escolha do par de linhas passou a ser **geométrica**, o que corrigiu as
+  fotos em que o recorte engolia dois quadrantes;
+- a armadilha **azul** passou de 7/65 para 65/65 recortes limpos.
+
+Os pixels entregues continuam sendo uma fatia exata da imagem original — o que
+mudou foi *onde* a fatia é feita, não *como*.
 
 ---
 
@@ -620,7 +703,7 @@ versão com stitching, tanto no modo `grid` quanto no `sequencial`.
 
 | Requisito | Como é garantido |
 |---|---|
-| Leitura em resolução cheia | `cv2.imread` sem downscale; a redução de 25% só existe em memória para detectar as linhas |
+| Leitura em resolução cheia | `cv2.imread` sem downscale; a redução de 12,5% só existe em memória para detectar as linhas |
 | Crop em resolução cheia | a detecção devolve **frações** (`crop_box_frac`), aplicadas na imagem original |
 | Sem re-encoding intermediário | o crop é uma *slice* NumPy da imagem decodificada; nada é recomprimido antes de salvar |
 | Saída lossless | PNG (`IMWRITE_PNG_COMPRESSION=1`) ou TIFF LZW (`IMWRITE_TIFF_COMPRESSION=5`) |
@@ -642,17 +725,32 @@ não abre (HEIC, RAW) — converta para JPEG/PNG antes; (3) caminho com acentos.
 terceiro caso já tem resgate automático via `imread_fallback`.
 
 **Muitos `Recortadas SEM deteccao`**
-A grade não está sendo encontrada. Verifique iluminação e contraste — as linhas
-pretas precisam ficar nitidamente mais escuras que o fundo amarelo. **Não mude
-os parâmetros de calibração para "resolver"**: isso muda o recorte de todas as
-fotos boas também.
+A grade não está sendo encontrada. Nessa ordem:
+
+1. Confira o `origem` no JSON de diagnóstico em `data/_falhas/`. As fotos que
+   entram aqui costumam ser as que **não são de armadilha** (fora de foco, sem
+   grade no enquadramento) — nesse caso a recusa está certa.
+2. Verifique iluminação e contraste: as linhas da grade precisam ficar
+   nitidamente mais escuras que o papel. A cor do papel **não** importa.
+3. Se o lote inteiro está difícil, tente travar a cor:
+   `--perfil azul` ou `--perfil amarela`. Isso aperta a faixa de largura aceita
+   e costuma resolver sem tocar na calibração.
+
+**Não mude os parâmetros de calibração para "resolver"**: isso muda o recorte de
+todas as fotos boas também. Se mudar mesmo assim, rode
+`python -m pytest tests/test_recorte_acervo.py` antes de subir.
+
+**O recorte engoliu dois quadrantes / veio uma linha preta no meio**
+Era o sintoma do detector antigo em armadilha azul, e está coberto por teste
+(`test_nenhuma_linha_da_grade_sobra_no_quadrante`). Se voltar a acontecer,
+guarde a foto e rode aquele teste apontando para ela — o diagnóstico sai pronto.
 
 **Fotos ficaram de fora / `Ignoradas` > 0**
 Você está no modo `grid`, que tem exatamente 40 posições. Rode com
 `--modo sequencial`.
 
 **Nomes colidindo entre envios**
-No modo sequencial, cada execução recomeça em `VARD0` e sobrescreve o
+No modo sequencial, cada execução recomeça em `VARD1` e sobrescreve o
 envio anterior. Use `--continuar` (ou uma `--saida` por job).
 
 **`MemoryError` / o processo morre no meio**
@@ -714,6 +812,43 @@ rastreável pelo `sumario.json`.
 
 ## Mudanças recentes
 
+### O recorte passou a atender a armadilha azul
+
+**Antes:** o detector binarizava a foto em tons de cinza para achar as linhas
+pretas da grade. Isso funciona quando o fundo é amarelo (claro em cinza), mas o
+azul da armadilha já é escuro em cinza — o algoritmo confundia fundo com linha,
+escolhia como borda "a linha mais escura de cada lado" e entregava dois
+quadrantes colados, uma faixa da moldura, ou a foto quase inteira. Só **7 das
+65** fotos azuis saíam com recorte utilizável.
+
+**Agora:** a detecção é cega à cor. Ela realça faixas escuras estreitas
+(blackhat), corrige a inclinação da grade, mede as linhas com critério absoluto
+e escolhe o par **consecutivo** cuja largura é plausível para um quadrante.
+
+| | Antes | Agora |
+|---|---|---|
+| Azuis com recorte limpo | 7 / 65 | **65 / 65** |
+| Amarelas com recorte limpo | 35 / 40 | **40 / 40** |
+| Dispersão da largura (azul) | ±0,152 | **±0,010** |
+| Dispersão da largura (amarela) | ±0,051 | **±0,009** |
+
+Junto vieram três mudanças de comportamento:
+
+- **o recorte acontece nos quatro lados.** A célula da grade (~4400 px) é menor
+  que a altura da foto (5400 px), então entregar a altura inteira deixava a
+  linha horizontal e tiras dos quadrantes vizinhos dentro do resultado. Quem
+  depende do comportamento antigo tem `RECORTE_EIXOS = 'so_vertical'`;
+- **a moldura sai do quadrante.** As pontas escuras que não são papel da
+  armadilha (fundo do microscópio, sombra) são aparadas, com trava de 15% por
+  ponta para nunca comer quadrante de verdade;
+- **`RECORTE_FATOR_DETECCAO` caiu de 0.25 para 0.125.** Todos os parâmetros
+  viraram fracionários, então a detecção ficou ~4× mais barata sem mudar o
+  resultado.
+
+**Comandos separados por cor?** Não foi preciso: o mesmo comando atende as duas.
+O `--perfil {auto,amarela,azul}` existe como trava opcional para lote difícil e
+**não muda o algoritmo** — só aperta a faixa de largura aceita.
+
 ### O lote deixou de ser replicado em disco
 
 **Antes:** o modo `grid` (o padrão) vinha configurado com a estratégia `copiar`.
@@ -723,7 +858,7 @@ Antes de recortar, ele gravava uma cópia byte-a-byte de cada foto em
 fotos viravam 90 arquivos.
 
 **Agora:** todos os modos usam a estratégia `virtual`. O nome novo é carimbado
-direto no arquivo do recorte, que já nasce como `VARD0.png` / `a1.png`. **Uma
+direto no arquivo do recorte, que já nasce como `VARD1.png` / `a1.png`. **Uma
 foto de entrada gera exatamente um arquivo de saída.**
 
 | | Antes | Agora |
@@ -749,15 +884,18 @@ Nesse caso o log emite um `WARNING` dizendo quantas cópias extras serão criada
 e o sumário final ganha a linha `Copias em 02_renomeadas`. Se essa linha não
 aparecer, nada foi replicado.
 
-### Numeração sequencial sem zeros à esquerda
+### Numeração sequencial sem zeros à esquerda, começando em 1
 
 **Antes:** `VARD0000001, VARD0000002, VARD0000003 …`
-**Agora:** `VARD0, VARD1, VARD2, VARD3 …`
+**Agora:** `VARD1, VARD2, VARD3, VARD4 …`
 
 ```python
 SEQUENCIAL_DIGITOS = 1   # era 7  → largura mínima do contador, sem zeros
-SEQUENCIAL_INICIO  = 0   # era 1  → a primeira foto do lote vira VARD0
+SEQUENCIAL_INICIO  = 1   # a primeira foto do lote vira VARD1
 ```
+
+**Não existe `VARD0`.** A contagem começa em 1, como qualquer conferência
+manual espera. Há um teste travando isso (`test_a_contagem_comeca_em_um`).
 
 Dois pontos que valem saber:
 
@@ -765,7 +903,7 @@ Dois pontos que valem saber:
   depois de `VARD9` o nome cresce sozinho para `VARD10`, `VARD100`, `VARD1000`.
   Continua sem teto de quantidade;
 - **ordenação alfabética pura embaralha.** Um programa que ordene por texto
-  cru mostra `VARD0, VARD1, VARD10, VARD11, VARD2…`. O Explorer do Windows e o
+  cru mostra `VARD1, VARD10, VARD11, VARD2…`. O Explorer do Windows e o
   próprio pipeline usam ordenação natural, então na prática a sequência aparece
   certa — mas se algum sistema externo do seu fluxo ordenar alfabeticamente, use
   largura fixa nesse caso: `--digitos 7`.
