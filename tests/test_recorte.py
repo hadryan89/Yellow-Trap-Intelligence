@@ -7,7 +7,9 @@ foi medido no acervo real:
   * os parametros de calibracao nao podem mudar sem alguem perceber;
   * o detector e CEGO A COR: armadilha amarela e azul, mesma geometria,
     tem que sair com o mesmo crop box;
-  * a linha da grade nunca entra no quadrante entregue;
+  * a linha da grade sai nas quatro bordas do quadrante, E NADA DEPOIS
+    DELA - e dela que a etapa seguinte precisa para remontar a placa - e o
+    modo 'dentro' continua entregando o quadrante sem traco nenhum;
   * o recorte acontece nos quatro lados (a celula e menor que a foto);
   * a inclinacao da grade e corrigida;
   * a deteccao roda na copia reduzida, mas o crop sai na resolucao cheia;
@@ -31,6 +33,7 @@ from src.recorte import (
     processar_foto,
     processar_item,
     recortar_em_resolucao_cheia,
+    resolver_borda,
     resolver_perfil,
 )
 from tests.fixtures.gerar_fixtures import (
@@ -42,9 +45,12 @@ from tests.fixtures.gerar_fixtures import (
     LARGURA_VALIDA,
 )
 
-# Tolerancia dos limites do recorte, em pixels da fixture. A borda esperada e
-# "a beirada de dentro da linha + a margem", e a margem e fracionaria.
+# Tolerancia dos limites do recorte, em pixels da fixture. A margem e
+# fracionaria, entao a borda nunca cai num pixel exato.
 FOLGA = 12
+# Com o default 'linha' a borda cai na beirada EXTERNA do traco: o corte anda
+# exatamente a espessura da linha para fora, sem folga nenhuma depois dela.
+FOLGA_TRACO = ESPESSURA_LINHA + FOLGA
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +62,7 @@ def test_parametros_de_calibracao_preservados():
     """Os valores medidos no acervo nao podem ter mudado em settings.py."""
     assert settings.RECORTE_FATOR_DETECCAO == 0.125
     assert settings.RECORTE_MARGEM_FRAC == 0.004
+    assert settings.RECORTE_BORDA == settings.RECORTE_BORDA_LINHA
     assert settings.RECORTE_EIXOS == settings.RECORTE_EIXO_AMBOS
     assert settings.RECORTE_PERFIL_PADRAO == "auto"
     assert settings.RECORTE_ESPESSURA_MAX_FRAC == 0.04
@@ -132,6 +139,11 @@ def test_perfil_invalido_e_recusado():
         resolver_perfil("verde")
 
 
+def test_borda_invalida_e_recusada():
+    with pytest.raises(ValueError, match="Borda invalida"):
+        resolver_borda("mais_ou_menos_no_meio")
+
+
 # ---------------------------------------------------------------------------
 # Deteccao - a cor nao entra na conta
 # ---------------------------------------------------------------------------
@@ -155,8 +167,12 @@ def test_amarela_e_azul_dao_o_mesmo_recorte(foto_valida, foto_azul):
 @pytest.mark.parametrize("nome_fixture", ["foto_valida", "foto_azul"])
 def test_crop_fica_dentro_do_quadrante_central(nome_fixture, request):
     """
-    O recorte tem que cair ENTRE as linhas da celula central nos dois eixos,
-    e nao entre as linhas dos quadrantes vizinhos.
+    O recorte tem que ABRACAR as linhas da celula central nos dois eixos, e
+    nao alcancar as linhas dos quadrantes vizinhos.
+
+    Com o default 'linha' cada borda cai um pouco FORA do traco (a espessura
+    dele mais a folga). A linha do vizinho esta a uma celula inteira de
+    distancia, entao a checagem continua valendo como enquadramento.
     """
     caminho = request.getfixturevalue(nome_fixture)
     _, info = recortar_em_resolucao_cheia(str(caminho), fator_deteccao=1.0)
@@ -164,25 +180,108 @@ def test_crop_fica_dentro_do_quadrante_central(nome_fixture, request):
     esquerda, direita = CROP_ESPERADO_X
     topo, base = CROP_ESPERADO_Y
 
-    assert esquerda < x1 < esquerda + FOLGA, "borda esquerda fora do quadrante"
-    assert direita - FOLGA < x2 < direita, "borda direita fora do quadrante"
-    assert topo < y1 < topo + FOLGA, "borda de cima fora do quadrante"
-    assert base - FOLGA < y2 < base, "borda de baixo fora do quadrante"
+    assert esquerda - FOLGA_TRACO < x1 < esquerda, "borda esquerda fora do quadrante"
+    assert direita < x2 < direita + FOLGA_TRACO, "borda direita fora do quadrante"
+    assert topo - FOLGA_TRACO < y1 < topo, "borda de cima fora do quadrante"
+    assert base < y2 < base + FOLGA_TRACO, "borda de baixo fora do quadrante"
+
+
+def _lados_com_traco(recortada, banda_frac=0.06):
+    """
+    Quantos dos 4 lados tem um traco escuro contiguo perto da borda.
+
+    PERTO da borda, nao EM cima dela: o corte deixa de proposito a folga da
+    inclinacao entre o traco e a beirada da imagem, entao a primeira coluna
+    nem sempre e a linha.
+    """
+    escuros = cv2.cvtColor(recortada, cv2.COLOR_BGR2GRAY) < 60
+    banda = max(4, int(banda_frac * recortada.shape[1]))
+    lados = (escuros[:banda].mean(1), escuros[-banda:].mean(1),
+             escuros[:, :banda].mean(0), escuros[:, -banda:].mean(0))
+    return sum(1 for lado in lados if lado.max() > 0.9)
 
 
 @pytest.mark.parametrize("nome_fixture", ["foto_valida", "foto_azul"])
-def test_a_linha_da_grade_nao_entra_no_quadrante(nome_fixture, request):
+def test_a_linha_da_grade_sai_no_quadrante(nome_fixture, request):
     """
-    Recortar no CENTRO da linha deixaria meia linha preta na entrega. O
-    corte sai da beirada de DENTRO da linha, mais a margem.
+    O default entrega os QUATRO tracos da grade: sao eles que permitem
+    juntar os 40 quadrantes de volta na placa com a grade visivel.
     """
     caminho = request.getfixturevalue(nome_fixture)
-    recortada, _ = recortar_em_resolucao_cheia(str(caminho), fator_deteccao=1.0)
+    recortada, info = recortar_em_resolucao_cheia(str(caminho),
+                                                  fator_deteccao=1.0)
+    assert info["borda"] == settings.RECORTE_BORDA_LINHA
+    assert _lados_com_traco(recortada) == 4
+
+
+@pytest.mark.parametrize("nome_fixture", ["foto_valida", "foto_azul"])
+def test_nao_sobra_margem_depois_do_traco(nome_fixture, request):
+    """
+    O quadrado tem que ser a propria beirada do arquivo.
+
+    Nada de papel, de quadrante vizinho ou de moldura depois do traco: a
+    PRIMEIRA fileira de cada lado ja e o traco. E o que a montagem da placa
+    pede - quadrado encostando em quadrado, sem faixa entre eles.
+    """
+    caminho = request.getfixturevalue(nome_fixture)
+    recortada, info = recortar_em_resolucao_cheia(str(caminho),
+                                                  fator_deteccao=1.0)
+    escuros = cv2.cvtColor(recortada, cv2.COLOR_BGR2GRAY) < 60
+    # O traco comeca na fileira 0 - a tolerancia de RENTE e so o
+    # arredondamento da caixa, que e medida em fracao da foto.
+    RENTE = 3
+    assert escuros[:RENTE].mean(1).max() > 0.9, "sobrou margem antes do traco de cima"
+    assert escuros[-RENTE:].mean(1).max() > 0.9, "sobrou margem depois do traco de baixo"
+    assert escuros[:, :RENTE].mean(0).max() > 0.9, "sobrou margem antes do traco esquerdo"
+    assert escuros[:, -RENTE:].mean(0).max() > 0.9, "sobrou margem depois do traco direito"
+
+    # E o corte cai na beirada EXTERNA do traco, nao alem dela: a fixture
+    # tem a linha em CROP_ESPERADO_X com ESPESSURA_LINHA de espessura.
+    _, _, x1, x2 = info["crop_box_cheia_px"]
+    esquerda, direita = CROP_ESPERADO_X
+    assert x1 == pytest.approx(esquerda - ESPESSURA_LINHA // 2, abs=3)
+    assert x2 == pytest.approx(direita + ESPESSURA_LINHA // 2, abs=3)
+
+
+@pytest.mark.parametrize("nome_fixture", ["foto_valida", "foto_azul"])
+def test_borda_dentro_entrega_o_quadrante_sem_traco(nome_fixture, request):
+    """
+    O comportamento anterior continua a uma flag de distancia: corte pela
+    beirada de DENTRO da linha, nada de traco na entrega.
+    """
+    caminho = request.getfixturevalue(nome_fixture)
+    recortada, _ = recortar_em_resolucao_cheia(
+        str(caminho), fator_deteccao=1.0, borda=settings.RECORTE_BORDA_DENTRO)
     escuros = cv2.cvtColor(recortada, cv2.COLOR_BGR2GRAY) < 60
 
     # Nenhuma linha/coluna da borda pode ser majoritariamente escura.
     assert escuros[0].mean() < 0.5 and escuros[-1].mean() < 0.5
     assert escuros[:, 0].mean() < 0.5 and escuros[:, -1].mean() < 0.5
+
+
+@pytest.mark.parametrize("nome_fixture", ["foto_valida", "foto_azul"])
+def test_meia_linha_corta_no_centro_do_traco(nome_fixture, request):
+    """
+    'meia_linha' existe para a placa remontada nao ficar com o traco dobrado
+    na emenda: cada quadrante leva metade dele. O corte fica entre o de
+    'dentro' e o de 'linha' - e em cima do centro do traco impresso.
+    """
+    caminho = request.getfixturevalue(nome_fixture)
+    caixas = {}
+    for borda in settings.RECORTE_BORDAS_VALIDAS:
+        _, info = recortar_em_resolucao_cheia(str(caminho), fator_deteccao=1.0,
+                                              borda=borda)
+        caixas[borda] = info["crop_box_cheia_px"]
+
+    _, _, x1_fora, x2_fora = caixas[settings.RECORTE_BORDA_LINHA]
+    _, _, x1_meio, x2_meio = caixas[settings.RECORTE_BORDA_MEIA_LINHA]
+    _, _, x1_dentro, x2_dentro = caixas[settings.RECORTE_BORDA_DENTRO]
+    assert x1_fora < x1_meio < x1_dentro
+    assert x2_dentro < x2_meio < x2_fora
+
+    esquerda, direita = CROP_ESPERADO_X
+    assert x1_meio == pytest.approx(esquerda, abs=2)
+    assert x2_meio == pytest.approx(direita, abs=2)
 
 
 def test_recorta_nos_quatro_lados(foto_valida):
@@ -232,10 +331,20 @@ def test_inclinacao_da_grade_e_corrigida(foto_inclinada):
                                                   fator_deteccao=1.0)
     assert info["sucesso"] is True
     assert info["inclinacao_graus"] == pytest.approx(-INCLINACAO_GRAUS, abs=0.4)
-    # E a linha girada continua fora do quadrante, inclusive nos cantos.
+    # E o traco girado cabe INTEIRO no quadrante: a folga do corte cresce
+    # com a inclinacao justamente porque a linha deriva nas pontas.
     escuros = cv2.cvtColor(recortada, cv2.COLOR_BGR2GRAY) < 60
-    assert escuros[0].mean() < 0.5 and escuros[-1].mean() < 0.5
-    assert escuros[:, 0].mean() < 0.5 and escuros[:, -1].mean() < 0.5
+    # Num traco girado nenhuma COLUNA e escura de ponta a ponta (ele anda de
+    # uma para a outra), entao a pergunta certa e por LINHA: a linha da
+    # imagem tem que encontrar o traco dentro da faixa da borda.
+    #
+    # 0.90, e nao 1.0, porque o corte nao deixa margem: numa das pontas o
+    # traco girado sai do quadro (ver `_bordas`). Sobra margem ou sobra
+    # traco - num recorte retangular nao da para ter os dois, e a escolha
+    # aqui e nao sobrar margem.
+    banda = int(0.10 * recortada.shape[1])
+    assert escuros[:, :banda].any(1).mean() > 0.90, "traco esquerdo cortado"
+    assert escuros[:, -banda:].any(1).mean() > 0.90, "traco direito cortado"
 
 
 def test_a_moldura_da_foto_nao_entra_no_quadrante(foto_valida):
@@ -325,12 +434,20 @@ def test_deteccao_e_deterministica(foto_valida):
 def test_fator_de_deteccao_nao_muda_o_enquadramento(foto_valida):
     """
     Todos os parametros sao fracionarios: mudar o fator muda o custo, nao o
-    resultado. A tolerancia e a resolucao da propria copia reduzida.
+    resultado.
+
+    A tolerancia e maior que FOLGA porque a beirada do traco e medida no
+    BRILHO, e o brilho da beirada depende do borrao da copia reduzida - ou
+    seja, da escala. No acervo real (fator 0.125 contra 0.25) a caixa anda
+    no maximo 28 px em ~5.000, meio por cento; na fixture o desvio e maior
+    porque a moldura preta encosta na linha de cima e o agrupamento junta
+    as duas, que e o caso mais dificil que ela cobre de proposito.
     """
+    FOLGA_ESCALA = 20
     _, cheio = recortar_em_resolucao_cheia(str(foto_valida), fator_deteccao=1.0)
     _, reduzido = recortar_em_resolucao_cheia(str(foto_valida), fator_deteccao=0.5)
     for a, b in zip(cheio["crop_box_cheia_px"], reduzido["crop_box_cheia_px"]):
-        assert abs(a - b) <= FOLGA
+        assert abs(a - b) <= FOLGA_ESCALA
 
 
 def test_falha_de_deteccao_devolve_imagem_cheia(foto_sem_grade):

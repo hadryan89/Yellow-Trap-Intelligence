@@ -60,9 +60,13 @@ PASTAS_OBRIGATORIAS = [
 # nada alem do NOME dos arquivos muda entre eles; o recorte e identico.
 #
 #   grid       -> comportamento historico: renomeia para o grid da placa
-#                 (a1..d10, ate QUANTIDADE_ESPERADA fotos) e recorta.
+#                 AMARELA (a1..d10, ate QUANTIDADE_ESPERADA fotos) e recorta.
+#                 A planta da placa AZUL nao esta mapeada aqui - lote azul
+#                 usa 'sequencial' ou 'recorte'. Isso e so nomeacao: o
+#                 recorte e o mesmo nos tres modos, em qualquer cor.
 #   sequencial -> renomeia para VARD1, VARD2, VARD3, ... sem limite de
-#                 quantidade, e recorta. Modo indicado para lotes grandes.
+#                 quantidade, e recorta. Modo indicado para lotes grandes
+#                 e para armadilha azul.
 #   recorte    -> nao renomeia nada: recorta preservando o nome de origem.
 MODO_GRID = "grid"
 MODO_SEQUENCIAL = "sequencial"
@@ -90,7 +94,11 @@ SEQUENCIAL_INICIO = 1
 SEQUENCIAL_CONTINUAR_NUMERACAO = False
 
 # ---------------------------------------------------------------------------
-# Grid da placa YellowTrap (usado apenas pelo modo 'grid')
+# Grid da placa AMARELA (usado apenas pelo modo 'grid')
+#
+# 4 colunas x 10 linhas = 40 posicoes. E a planta da placa amarela, nao uma
+# propriedade do recorte. Nao existe grid equivalente para a azul: aquele
+# lote entra por 'sequencial'.
 # ---------------------------------------------------------------------------
 LETRAS_COLUNAS = ["a", "b", "c", "d"]
 NUMEROS_LINHAS = list(range(1, 11))
@@ -169,9 +177,52 @@ RECORTE_FATOR_DETECCAO = 0.125
 # 9600 x 0.125 = 1200, entao o piso nao mexe no caso de producao.
 RECORTE_LARGURA_MINIMA_DETECCAO = 900
 
-# Folga interna, em fracao da largura, contada a partir da borda de dentro de
-# cada linha da grade. Garante que nenhum pedaco da linha entre no quadrante.
+# Folga, em fracao da largura, contada a partir da borda da linha da grade.
+# O SENTIDO dela depende de RECORTE_BORDA (abaixo): em 'dentro' ela empurra o
+# corte para dentro do quadrante (nenhum pedaco de linha entra); em 'linha'
+# ela empurra para fora (nenhum pedaco de linha fica de fora). Nos dois casos
+# a folga ainda cresce com a inclinacao medida, porque a linha e reta no meio
+# da foto mas deriva nas pontas.
 RECORTE_MARGEM_FRAC = 0.004
+
+# O que fazer com a LINHA da grade - o traco impresso que separa dois
+# quadrantes e pertence aos dois.
+#
+#   dentro     -> corta pela borda de DENTRO da linha: o quadrante sai sem
+#                 nenhum traco. Era o unico comportamento ate a v2.0.
+#   linha      -> corta pela borda de FORA: a linha aparece INTEIRA nos quatro
+#                 lados do quadrante. E o PADRAO, porque a etapa seguinte
+#                 (juntar os 40 quadrantes de volta na placa) precisa dos
+#                 tracos para remontar a grade.
+#   meia_linha -> corta pelo MEIO da linha. Cada quadrante leva metade dela,
+#                 entao ao encostar dois vizinhos a linha se reconstitui com a
+#                 espessura ORIGINAL. Em 'linha' a mesma emenda sai com a
+#                 linha dobrada (cada lado trouxe a sua copia inteira) - use
+#                 'meia_linha' se a montagem precisar ser fiel ao papel.
+#
+# O que muda e so onde o corte cai; a deteccao e identica nos tres. Incluir a
+# linha custa uma tira do quadrante vizinho junto (a espessura da linha mais a
+# folga), inevitavel num recorte alinhado aos eixos quando a grade esta torta.
+# Ate onde vai a linha, medido no BRILHO. A mascara do blackhat marca o
+# NUCLEO do traco: a beirada impressa desbota e nao responde ao realce, entao
+# cortar pela mascara entrega meia linha. A linha acaba onde o brilho ja
+# voltou (1 - este fator) do caminho ate o papel - 0.25 = 75% recuperado.
+# Menor = corte mais colado ao nucleo (arrisca cortar traco); maior = corte
+# mais folgado (arrisca sobrar papel).
+RECORTE_RECUPERACAO_FRAC = 0.25
+
+# Quantas vezes mais larga que a parceira uma linha pode ser antes de a
+# medida dela ser descartada. Acima disso nao e traco mais grosso: e traco
+# com coisa escura colada (a moldura da foto, uma sombra), e quem manda
+# passa a ser a largura da parceira.
+RECORTE_LINHA_INFLADA = 2.0
+
+RECORTE_BORDA_DENTRO = "dentro"
+RECORTE_BORDA_LINHA = "linha"
+RECORTE_BORDA_MEIA_LINHA = "meia_linha"
+RECORTE_BORDAS_VALIDAS = (RECORTE_BORDA_DENTRO, RECORTE_BORDA_LINHA,
+                          RECORTE_BORDA_MEIA_LINHA)
+RECORTE_BORDA = RECORTE_BORDA_LINHA
 
 # Em quais eixos recortar.
 #   ambos       -> recorta os 4 lados no quadrante. A celula da grade e
@@ -197,8 +248,12 @@ RECORTE_FORMATOS_VALIDOS = ("png", "tiff", "jpg_max")
 # O ALGORITMO E O MESMO para todas as cores: o detector nao olha matiz, olha
 # geometria. O perfil so aperta a faixa de largura aceita para o quadrante,
 # e serve de trava extra quando um lote e dificil (muita oclusao, foto
-# tremida). Medido nos acervos: azul 0.464-0.482 da largura da foto,
-# amarela 0.525-0.560.
+# tremida). Medido nos acervos de referencia com esta calibracao (65 fotos
+# azuis, 40 amarelas - as 2 amarelas que nao sao armadilha ficam de fora):
+#   azul     largura 0.446-0.471 da foto (mediana 0.457, desvio 0.005)
+#   amarela  largura 0.518-0.554 da foto (mediana 0.535, desvio 0.009)
+# As faixas abaixo sao mais largas que o medido de proposito - elas sao
+# trava contra absurdo, nao o intervalo esperado.
 #
 #   auto     -> aceita as duas (e qualquer armadilha nova na mesma faixa)
 #   amarela  -> so aceita quadrante de armadilha amarela

@@ -216,10 +216,10 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
 
     logger.info(
         "Recorte: %d foto(s), formato '%s', %d worker(s). Parametros: "
-        "perfil=%s fator_deteccao=%s margem_frac=%s espessura_max_frac=%s "
-        "inclinacao_max=%s graus cortar_moldura=%s",
+        "perfil=%s borda=%s fator_deteccao=%s margem_frac=%s "
+        "espessura_max_frac=%s inclinacao_max=%s graus cortar_moldura=%s",
         len(itens), formato, workers,
-        opcoes.perfil, settings.RECORTE_FATOR_DETECCAO,
+        opcoes.perfil, opcoes.borda, settings.RECORTE_FATOR_DETECCAO,
         settings.RECORTE_MARGEM_FRAC, settings.RECORTE_ESPESSURA_MAX_FRAC,
         settings.RECORTE_INCLINACAO_MAX_GRAUS, settings.RECORTE_CORTAR_MOLDURA,
     )
@@ -253,6 +253,7 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
             pasta_saida=str(pasta_saida),
             formato=formato,
             perfil=opcoes.perfil,
+            borda=opcoes.borda,
             lote_id=sumario.lote_id,
             pular_existentes=opcoes.pular_existentes,
             # So movemos para _falhas o que esta numa pasta intermediaria

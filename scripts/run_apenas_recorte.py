@@ -47,6 +47,12 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="cor da armadilha: auto atende amarela e azul "
                              "(padrao); amarela/azul travam a faixa esperada "
                              "do quadrante num lote dificil")
+    parser.add_argument("--borda", choices=list(settings.RECORTE_BORDAS_VALIDAS),
+                        default=None,
+                        help="onde o corte cai em relacao a linha da grade: "
+                             "linha = o traco inteiro fica no quadrante "
+                             "(padrao) | dentro = quadrante sem traco | "
+                             "meia_linha = metade do traco de cada lado")
     parser.add_argument("--limite", type=int, default=None,
                         help="processa apenas as N primeiras fotos")
     parser.add_argument("--retomar", dest="pular_existentes", action="store_true",
@@ -71,6 +77,7 @@ def main() -> int:
         workers=args.workers,
         formato=args.formato,
         perfil=args.perfil,
+        borda=args.borda,
         limite=args.limite,
         pular_existentes=args.pular_existentes,
         limpar_saida=args.limpar_saida,

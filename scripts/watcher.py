@@ -296,6 +296,7 @@ def loop(args) -> int:
         workers=args.workers,
         formato=args.formato,
         perfil=args.perfil,
+        borda=args.borda,
         estrategia_renomeacao=args.estrategia,
         continuar_numeracao=args.continuar,
         pular_existentes=args.pular_existentes,
@@ -422,6 +423,12 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="cor da armadilha: auto atende amarela e azul "
                              "(padrao); amarela/azul travam a faixa esperada "
                              "do quadrante num lote dificil")
+    parser.add_argument("--borda", choices=list(settings.RECORTE_BORDAS_VALIDAS),
+                        default=None,
+                        help="onde o corte cai em relacao a linha da grade: "
+                             "linha = o traco inteiro fica no quadrante "
+                             "(padrao) | dentro = quadrante sem traco | "
+                             "meia_linha = metade do traco de cada lado")
     parser.add_argument("--materializar", dest="estrategia",
                         choices=list(settings.ESTRATEGIAS_VALIDAS), default=None,
                         help="como gravar 02_renomeadas (virtual = nao grava)")

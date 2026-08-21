@@ -19,6 +19,10 @@ O recorte e o MESMO para armadilha amarela e azul - o detector olha a
 geometria da grade, nao a cor do papel. --perfil so aperta a faixa de largura
 aceita para o quadrante, como trava extra num lote dificil.
 
+O quadrante sai COM as linhas da grade nas quatro bordas, para que a etapa
+seguinte consiga remontar a placa com a grade visivel. Use --borda dentro se
+precisar do quadrante sem traco nenhum.
+
 Codigo de saida:
     0  lote concluido sem nenhuma falha
     1  falha estrutural (pasta inexistente, lote vazio, nada processado)
@@ -66,6 +70,12 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="cor da armadilha: auto atende amarela e azul "
                              "(padrao); amarela/azul travam a faixa esperada "
                              "do quadrante num lote dificil")
+    parser.add_argument("--borda", choices=list(settings.RECORTE_BORDAS_VALIDAS),
+                        default=None,
+                        help="onde o corte cai em relacao a linha da grade: "
+                             "linha = o traco inteiro fica no quadrante "
+                             "(padrao) | dentro = quadrante sem traco | "
+                             "meia_linha = metade do traco de cada lado")
     parser.add_argument("--limite", type=int, default=None,
                         help="processa apenas as N primeiras fotos (teste/amostra)")
 
@@ -121,6 +131,7 @@ def main() -> int:
         workers=args.workers,
         formato=args.formato,
         perfil=args.perfil,
+        borda=args.borda,
         limite=args.limite,
         prefixo=args.prefixo,
         digitos=args.digitos,

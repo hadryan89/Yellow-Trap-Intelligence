@@ -12,6 +12,13 @@ quadrante central de cada uma. A entrega final são os quadrantes limpos — a
 identificação das pragas por *deep learning* é uma etapa posterior, fora do
 escopo deste repositório.
 
+> **Sobre o nome.** O projeto nasceu atendendo só a armadilha amarela e o nome
+> ficou. Da versão 2.0.0 em diante, **amarela e azul são o mesmo caso**: mesmo
+> código, mesmo comando, mesma calibração. Os identificadores públicos
+> (`yellowtrap-pipeline`, `YELLOWTRAP_DATA_DIR`, o repositório
+> `Yellow-Trap-Intelligence`) foram mantidos de propósito, para não quebrar
+> integração já publicada — eles não significam que a azul seja um caso à parte.
+
 ### Uma única linha de comando para as duas cores
 
 O detector de grade **não olha a cor do papel, olha a geometria**. Amarela e
@@ -22,28 +29,40 @@ python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_amarelas"
 python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_azuis"
 ```
 
-Existe um `--perfil {auto,amarela,azul}` opcional, que **não muda o algoritmo**:
-ele só aperta a faixa de largura aceita para o quadrante, como trava extra num
-lote difícil. O default `auto` atende as duas.
-
 Medido sobre o acervo real (65 fotos azuis + 40 amarelas), com o critério que
-importa para a etapa seguinte — *nenhuma linha da grade dentro do quadrante
-entregue*:
+importa para a etapa seguinte — *o recorte cai na linha da grade, nunca no meio
+do quadrante vizinho*:
 
 | | Versão anterior | Esta versão |
 |---|---|---|
 | Azuis com recorte limpo | 7 / 65 | **65 / 65** |
 | Amarelas com recorte limpo | 35 / 40 | **40 / 40** |
-| Dispersão da largura do quadrante (azul) | ±0,152 | **±0,010** |
-| Dispersão da largura do quadrante (amarela) | ±0,051 | **±0,009** |
+| Dispersão da largura do quadrante (azul) | ±0,152 | **±0,004** |
+| Dispersão da largura do quadrante (amarela) | ±0,051 | **±0,010** |
 
 `tests/test_recorte_acervo.py` trava esses números contra as fotos reais.
+
+### O quadrante sai com os traços da grade
+
+O corte **para na beirada externa de cada linha**: o quadrante entregue vem com
+os quatro traços da grade desenhados na borda e **nada depois deles** — o traço
+é a própria beirada do arquivo. É com isso que a etapa seguinte encosta os 40
+quadrantes de volta na placa e enxerga a grade. Quem precisar do quadrante sem
+traço nenhum (o comportamento até a 2.0) roda com `--borda dentro`. Ver
+[Os traços da grade no recorte](#os-traços-da-grade-no-recorte).
+
+Uma diferença **de nomeação**, e só ela, separa as duas cores na prática: o modo
+`grid` conhece a planta da placa amarela (40 posições, `a1..d10`) e não conhece a
+da azul. Lote azul vai de `--modo sequencial`. Ver
+[Armadilha azul](#armadilha-azul).
 
 ---
 
 ## Índice
 
 - [O pipeline em 2 etapas](#o-pipeline-em-2-etapas)
+- [Os traços da grade no recorte](#os-traços-da-grade-no-recorte)
+- [Armadilha azul](#armadilha-azul)
 - [Modos de operação](#modos-de-operação)
 - [Requisitos](#requisitos)
 - [Setup](#setup)
@@ -107,6 +126,60 @@ O corte nos quatro lados importa: a célula da grade (~4400 px) é menor que a
 altura da foto (5400 px), então entregar a altura inteira deixava a linha
 horizontal e tiras dos quadrantes de cima e de baixo dentro do resultado.
 
+### Os traços da grade no recorte
+
+Achar as linhas é uma coisa; decidir **de que lado delas o corte cai** é outra.
+A linha impressa que separa dois quadrantes pertence aos dois, e o que fazer com
+ela é uma escolha — `RECORTE_BORDA` em `settings.py`, ou `--borda` na linha de
+comando:
+
+| `--borda` | Onde o corte para | O que o quadrante entrega |
+|---|---|---|
+| `linha` **(padrão)** | na beirada **externa** do traço | os quatro traços na borda, e nada depois deles |
+| `dentro` | na beirada **interna** do traço | quadrante sem traço nenhum (comportamento até a 2.0) |
+| `meia_linha` | no **centro** do traço | metade do traço de cada lado |
+
+O padrão é `linha` porque a etapa seguinte — juntar os 40 quadrantes de volta na
+placa — precisa dos traços para remontar a grade. **Não sobra margem**: nem papel,
+nem faixa do quadrante vizinho, nem moldura. A primeira fileira de pixels de cada
+lado já é o traço, então quadrado encosta em quadrado na montagem.
+
+No acervo real isso deixa o quadrante ~4% maior de cada lado que o recorte sem
+traço (largura 0,495 da foto na azul contra 0,457) — a diferença é exatamente a
+espessura da linha, que mede ~90 px numa foto de 9.600.
+
+**A beirada do traço é medida no brilho, não na máscara.** O realce que encontra
+as linhas (blackhat) marca só o **núcleo** escuro delas; a tinta desbota nas
+beiradas e não responde ao realce. Cortar pela máscara entregava meia linha — no
+acervo, 51% a 77% dos lados saíam com o traço partido ao meio. Agora a linha vai
+até onde o brilho volta ao papel, medido em volta de cada linha (a iluminação cai
+para as pontas do quadro: nas amarelas, 183 de um lado contra 167 do outro) e com
+interpolação sub-pixel, porque cada amostra do perfil vale 8 px na foto cheia.
+
+Uma ressalva da montagem: cada emenda encosta o traço de um quadrante no traço do
+vizinho, e a linha sai com o **dobro** da espessura. Como é a mesma linha impressa
+pertencendo aos dois, `--borda meia_linha` parte ela ao meio e a emenda
+reconstitui a espessura original do papel.
+
+Duas coisas que valem saber, e as duas estão travadas por teste no acervo:
+
+- **grade torta custa um pedaço do traço.** O recorte é alinhado aos eixos e a
+  linha deriva nas pontas, então conter o traço inteiro exigiria justamente a
+  margem que não pode existir. Numa das pontas ele sai um pouco do quadro: 18 px
+  de 4.800 na mediana do acervo azul, 71 px na foto mais torta de todas. Sobra
+  margem ou sobra traço — num recorte retangular não dá para ter os dois;
+- **traço não se confunde com o fim do papel.** Quando a célula sai pela beirada
+  do enquadramento, o que o detector encontra ali não é linha da grade: é a borda
+  da placa, com o fundo do microscópio atrás. Escuro que vai até a beirada da
+  foto sem clarear é reconhecido como **fim do papel**, e nesse lado o corte para
+  onde o papel acaba — não onde o escuro acaba. É o que impede a faixa preta de
+  entrar. Na amarela isso vale para 22 dos 40 topos e 9 das 40 bases;
+- **coisa escura colada na linha não arrasta o corte.** Uma linha cujo grupo
+  detectado é mais que o dobro do da parceira não está medindo só linha (sombra,
+  moldura, um vizinho que o agrupamento juntou): a largura da parceira vale para
+  as duas. A beirada de dentro continua sendo a própria, que a sujeira de fora
+  não desloca.
+
 ### 1 foto de entrada = 1 arquivo de saída
 
 O lote **não** é replicado pelas pastas do pipeline. Jogue 30 fotos em
@@ -114,7 +187,7 @@ O lote **não** é replicado pelas pastas do pipeline. Jogue 30 fotos em
 nada. Renomear não exige escrever um segundo lote em disco: o recorte **sempre**
 grava um arquivo novo, então o nome novo é aplicado direto nele e o quadrante já
 nasce como `VARD1.png`. É isso que a estratégia `virtual` faz, e ela é o
-**default de todos os modos**.
+**default de todos os modos**. Vale igual para as duas cores.
 
 Se quiser mesmo ver as fotos renomeadas em `02_renomeadas/`, peça
 explicitamente com `--materializar` — e saiba o que cada opção custa:
@@ -132,22 +205,154 @@ replicado.
 
 ---
 
+## Armadilha azul
+
+A azul não é um modo, um branch nem um caminho alternativo do código: ela passa
+pelas mesmas funções que a amarela, com a mesma calibração. Esta seção existe
+porque a informação sobre ela estava espalhada pelo documento, e porque há
+**um** ponto em que as duas cores realmente divergem — a nomeação.
+
+### O que muda, o que não muda
+
+| Etapa | Amarela | Azul |
+|---|---|---|
+| Detecção da grade | mesma função, mesma calibração | **idêntica** — o detector olha geometria, não matiz |
+| Recorte | 4 lados, fatia exata do original | **idêntico** |
+| Gravação / formato / qualidade | PNG, TIFF ou `jpg_max` | **idêntico** |
+| **Nomeação `grid` (`a1..d10`)** | é a planta da placa amarela: 40 posições | **não se aplica** — a planta da placa azul não está mapeada no código |
+| `--perfil` | trava opcional | trava opcional |
+
+Só a linha em negrito exige decisão sua. As outras quatro não têm o que
+configurar.
+
+### Por que lote azul vai de `--modo sequencial`
+
+O modo `grid` não "recorta em grid" — ele **atribui nomes de posição**
+(`a1`, `a2` … `d10`) assumindo 4 colunas × 10 linhas, que é a planta da placa
+amarela, fixada em `QUANTIDADE_ESPERADA = 40`. Jogar um lote azul nesse modo não
+produz recorte errado; produz **nome errado**, e descarta como `Ignoradas` tudo
+que passar da 40ª foto (o acervo azul de referência tem 65).
+
+```powershell
+# Certo para azul: nomeia VARD1, VARD2 … sem teto de quantidade
+python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_azuis"
+
+# Se quiser preservar os nomes originais da câmera
+python scripts/run_pipeline.py --modo recorte --entrada "D:\lote_azuis"
+```
+
+Se um dia a planta da placa azul for mapeada, ela entra como um grid próprio em
+`settings.py` (`LETRAS_COLUNAS` / `NUMEROS_LINHAS`) — nada no recorte muda.
+
+### A geometria medida
+
+Medido sobre o acervo real com a calibração atual — 65 fotos azuis
+(`data/azuis/BlueTrap/`) e 40 amarelas (`data/01_entrada_bruta/`), todas
+9600×5400 px. A fração é do tamanho da foto; o valor em px é o quadrante
+entregue:
+
+Os números são do recorte **com traço** (o padrão); a coluna "sem traço" mostra
+o mesmo acervo com `--borda dentro`, para dimensionar o que a linha acrescenta.
+
+| | Azul | Amarela |
+|---|---|---|
+| Fotos com quadrante detectado | 65 / 65 | 38 / 40 · as 2 restantes não são armadilha |
+| Largura do quadrante (fração) | **0,495** · faixa 0,486–0,517 | **0,553** · faixa 0,537–0,572 |
+| Largura sem traço (`--borda dentro`) | 0,457 | 0,535 |
+| Altura do quadrante (fração) | **0,871** · faixa 0,809–0,976 | **0,967** · faixa 0,932–1,000 |
+| Quadrante entregue (mediana) | ~4.750 × ~4.700 px | ~5.310 × ~5.220 px |
+| Desvio-padrão · largura / altura | 0,005 / 0,040 | 0,009 / 0,019 |
+| Lados com o traço na borda | 93% (243/260) | 82% (125/152) |
+| Onde o corte caiu no traço (0 = meio, 1 = papel) | 0,59 | 0,72 |
+| Lados com o traço partido ao meio | 9% | 9% |
+
+As três últimas linhas são o critério de precisão. **Lados com o traço** conta
+onde há traço na faixa da borda; os que faltam são linha apagada no papel,
+coberta por praga, ou — na amarela — linha horizontal que ficou **fora do
+enquadramento** da câmera, já que ali o quadrante ocupa 0,97 da altura da foto.
+Nesses lados o recorte entrega a borda do papel, sem o fundo preto atrás dela.
+
+**Onde o corte caiu** mede, nos lados que têm traço, se a borda do arquivo parou
+na beirada externa dele (perto de 1), no meio dele (perto de 0) ou já no papel
+(1). Antes de a beirada passar a ser medida no brilho, essa medida era 0,02 a
+0,55 e mais da metade dos lados saía com o traço partido.
+
+Duas leituras práticas saem daí:
+
+- **a célula da placa azul é ~15% menor no enquadramento.** É por isso que o
+  corte nos quatro lados pesa mais na azul: sobra muito mais quadrante vizinho
+  em volta (18% da altura, contra 5% na amarela). Rodar azul com
+  `RECORTE_EIXOS = 'so_vertical'` devolve a foto com a altura cheia e entrega
+  faixa dos vizinhos junto — não faça isso num lote azul;
+- **na largura, a azul é a mais previsível das duas** (desvio 0,005 contra
+  0,009) — e a largura é a métrica sobre a qual a calibração foi fechada. Já a
+  **altura oscila mais na azul** (desvio 0,046 contra 0,017): como o quadrante
+  azul é pequeno no quadro, o quanto de vizinho entra em cima e embaixo depende
+  de onde o operador centralizou a foto. Isso é enquadramento, não erro de
+  detecção — as 65 saíram sem linha de grade dentro. Na amarela acontece o
+  oposto: o quadrante quase preenche a altura do quadro e em algumas fotos não
+  sobra linha horizontal para medir, então a altura sai cheia (o `1,000` no
+  topo da faixa). Na azul isso nunca aconteceu no acervo.
+
+### `--perfil azul`: quando vale
+
+O default `auto` aceita quadrante de 0,30 a 0,68 da largura e resolve as duas
+cores — foi assim que as 65 azuis saíram limpas, sem flag nenhuma. O
+`--perfil azul` aperta a janela para 0,38–0,56, o que **não muda o algoritmo**:
+só recusa mais cedo um par de linhas implausível.
+
+```powershell
+python scripts/run_pipeline.py --modo sequencial --perfil azul --entrada "D:\lote_azuis"
+```
+
+Use quando o lote for difícil — muita oclusão, foto tremida, sujeira pesada — e
+o sumário acusar `Recortadas SEM deteccao` ou quadrantes de tamanhos díspares.
+Num lote saudável ele não muda nada. **Não é** um "modo azul" que precise ser
+ligado na rotina.
+
+### Conferindo que o lote azul saiu certo
+
+1. `Recortadas SEM deteccao` no sumário deve ser **0**;
+2. a **largura** dos arquivos em `03_recortadas/` deve ser uniforme: ~4.750 px,
+   variando entre 4.660 e 4.970. Largura fora disso, ou dispersa dentro do
+   próprio lote, é o sinal de detecção ruim. A **altura** varia legitimamente
+   mais (~4.370 a 5.270 px), porque depende de como cada foto foi centralizada;
+   altura de **5400 px** (a foto inteira) já não é, sozinha, sinal de falha —
+   ao encostar o corte no traço ele pode alcançar a beirada da foto. Quem decide
+   é o sumário: `Recortadas SEM deteccao`;
+3. os **traços da grade nas quatro bordas** do quadrante, e nenhuma linha preta
+   atravessando o miolo. São os critérios travados por
+   `test_o_traco_da_grade_sai_nas_bordas` e
+   `test_nenhuma_linha_da_grade_sobra_no_miolo`.
+
+Para refazer a medição da tabela acima contra o seu próprio acervo:
+
+```powershell
+python -m pytest tests/test_recorte_acervo.py -m acervo -v
+```
+
+O teste se pula sozinho quando as pastas do acervo não estão no disco.
+
+---
+
 ## Modos de operação
 
 Escolha com `--modo`. **A única coisa que muda entre os modos é o NOME do
 arquivo de saída** — o recorte é bit-a-bit o mesmo.
 
-| Modo | Nomes gerados | Limite de fotos | Materialização default |
+| Modo | Nomes gerados | Limite de fotos | Serve para |
 |---|---|---|---|
-| `grid` | `a1, a2 … d10` (posição na placa) | 40 (as posições do grid) | `virtual` |
-| `sequencial` | `VARD1, VARD2, VARD3 …` | nenhum | `virtual` |
-| `recorte` | preserva o nome de origem | nenhum | `virtual` |
+| `grid` | `a1, a2 … d10` (posição na **placa amarela**) | 40 (as posições do grid) | lote de placa amarela completa |
+| `sequencial` | `VARD1, VARD2, VARD3 …` | nenhum | qualquer lote, **inclusive azul** |
+| `recorte` | preserva o nome de origem | nenhum | quando o nome de origem já é a referência |
+
+A materialização default é `virtual` nos três.
 
 ```powershell
-# O padrão de sempre: 40 fotos viram a1..d10 recortadas
+# O padrão de sempre: 40 fotos da placa amarela viram a1..d10 recortadas
 python scripts/run_pipeline.py --modo grid
 
-# Só renomear (VARD1, VARD2…) e recortar — para lotes de qualquer tamanho
+# Só renomear (VARD1, VARD2…) e recortar — qualquer tamanho, qualquer cor
 python scripts/run_pipeline.py --modo sequencial
 
 # Só recortar, mantendo os nomes
@@ -157,6 +362,10 @@ python scripts/run_pipeline.py --modo recorte
 No modo `grid`, fotos que passarem das 40 posições **não são processadas** — e
 isso aparece como `ERROR` no log e no sumário (`Ignoradas`), nunca como um
 descarte silencioso. Lote maior que o grid → use `--modo sequencial`.
+
+> O `grid` é a planta da **placa amarela**, não uma propriedade do recorte. Lote
+> de armadilha azul deve usar `--modo sequencial` (ou `--modo recorte`); ver
+> [Armadilha azul](#armadilha-azul).
 
 ---
 
@@ -228,8 +437,8 @@ Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
 | Comando | O que faz |
 |---|---|
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
-| `python scripts/run_pipeline.py --modo grid` | padrão histórico: a1..d10 + recorte |
-| `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte, sem limite de quantidade |
+| `python scripts/run_pipeline.py --modo grid` | padrão histórico: a1..d10 + recorte — **placa amarela** |
+| `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte, sem limite de quantidade — qualquer cor |
 | `python scripts/run_pipeline.py --simular` | mostra o plano de nomes sem gravar nada |
 | `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
 | `python scripts/watcher.py` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
@@ -289,6 +498,12 @@ python scripts/run_pipeline.py --formato tiff
 
 # Grid guardando as renomeadas e o ZIP de integridade
 python scripts/run_pipeline.py --modo grid --materializar copiar --zip
+
+# Lote de armadilha AZUL (o grid não vale para ela — ver "Armadilha azul")
+python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_azuis"
+
+# Quadrante SEM os traços da grade (comportamento até a 2.0)
+python scripts/run_pipeline.py --modo sequencial --borda dentro
 ```
 
 ### Modo watcher (contínuo, vigiando a pasta)
@@ -435,6 +650,8 @@ yellowtrap_pipeline/
 │   ├── 01_entrada_bruta/        fotos originais (+ _lotes/ com o histórico)
 │   ├── 02_renomeadas/           vazia por padrão (só com `--materializar`)
 │   ├── 03_recortadas/           quadrantes limpos  ← entrega final
+│   ├── azuis/BlueTrap/          acervo de referência da armadilha azul
+│   │                            (65 fotos; usado só pelos testes de acervo)
 │   ├── _relatorios/             <lote_id>/sumario.json
 │   ├── _falhas/                 fotos problemáticas + JSON do motivo
 │   └── _zips/                   ZIPs de integridade (se habilitado)
@@ -516,7 +733,10 @@ Ele é pulado automaticamente quando o acervo não está no disco.
 | `RENOMEACAO_ESTRATEGIA` | `virtual` em todos os modos | `virtual` / `hardlink` / `copiar` / `mover` — só `virtual` e `mover` não duplicam o lote |
 | `RENOMEACAO_VERIFICAR_MD5` | `True` | conferência da cópia (só afeta `copiar`) |
 | `RECORTE_FORMATO_SAIDA` | `'png'` | `png`, `tiff`, `jpg_max` |
-| `RECORTE_PERFIL_PADRAO` | `'auto'` | cor da armadilha: `auto` (as duas), `amarela`, `azul`. Só aperta a faixa de largura aceita |
+| `RECORTE_PERFIL_PADRAO` | `'auto'` | cor da armadilha: `auto` (as duas), `amarela`, `azul`. Só aperta a faixa de largura aceita — ver [Armadilha azul](#armadilha-azul) |
+| `RECORTE_BORDA` | `'linha'` | onde o corte para: `linha` na beirada externa do traço (traço sim, margem não), `dentro` sem traço, `meia_linha` no centro do traço — ver [Os traços da grade no recorte](#os-traços-da-grade-no-recorte) |
+| `RECORTE_RECUPERACAO_FRAC` | `0.25` | onde a linha acaba, no brilho: o traço vai até o brilho ter voltado 75% do caminho até o papel |
+| `RECORTE_LINHA_INFLADA` | `2.0` | quantas vezes mais larga que a parceira uma linha pode ser antes de a medida dela ser descartada |
 | `RECORTE_EIXOS` | `'ambos'` | `ambos` recorta os 4 lados; `so_vertical` devolve a altura inteira (comportamento histórico) |
 | `RECORTE_CORTAR_MOLDURA` | `True` | apara as pontas que não são papel da armadilha (fundo do microscópio, sombra) |
 | `RECORTE_PULAR_EXISTENTES` | `False` | retomada automática |
@@ -612,7 +832,7 @@ Toda falha gera um `.json` em `data/_falhas/<lote_id>/`:
 | **Imagem ilegível/corrompida** | quadrante não é gerado; entra em `Falhas` | só se estiver numa pasta intermediária (ver abaixo) |
 | **MD5 divergente na renomeação** | cópia rejeitada | sim, vai para `_falhas/` |
 | **Detecção da grade falhou** | quadrante é salvo com a **imagem cheia, sem recorte** + `WARNING` | **não** — só o JSON de diagnóstico |
-| **Foto além das 40 posições (modo grid)** | não é processada; entra em `Ignoradas` + `ERROR` | não |
+| **Foto além das 40 posições (modo grid)** | não é processada; entra em `Ignoradas` + `ERROR`. Causa comum: lote de placa azul no modo `grid` | não |
 
 > **O arquivo original do usuário nunca é movido.** Quando o recorte lê direto
 > da pasta de entrada (estratégia `virtual`), a foto problemática fica onde
@@ -664,12 +884,22 @@ primeira execução — nada de binário no repositório.
   duplicado no código (tudo resolve em `settings.py`);
 - **a cor não entra na conta**: a mesma geometria em amarelo e em azul tem que
   dar o **mesmo crop box** (`test_amarela_e_azul_dao_o_mesmo_recorte`);
-- a **detecção**: crop entre as linhas da célula central nos dois eixos, linha
-  da grade fora do quadrante, linha de vizinho não vira borda, moldura preta
-  aparada, inclinação de 1,5° corrigida;
+- a **detecção**: crop abraçando as linhas da célula central nos dois eixos,
+  linha de vizinho não vira borda, moldura preta aparada, inclinação de 1,5°
+  corrigida;
+- **os três modos de borda**: `linha` entrega os quatro traços, `dentro` entrega
+  o quadrante sem traço nenhum e `meia_linha` corta no centro do traço;
+- **não sobra margem depois do traço**: a primeira fileira de pixels de cada
+  lado já é o traço (`test_nao_sobra_margem_depois_do_traco`);
+- **o fator de detecção não muda o enquadramento**: a mesma foto em 4 escalas
+  entrega a mesma caixa (é o que pega âncora instável em grupo de linha
+  contaminado);
 - **regressão contra o acervo real** (`test_recorte_acervo.py`): toda foto de
-  armadilha vira quadrante, a largura entregue é consistente (desvio < 0,02) e
-  **nenhuma linha da grade sobra dentro do quadrante**;
+  armadilha vira quadrante, a largura entregue é consistente (desvio < 0,02),
+  **o traço da grade sai nas bordas** (≥ 90% dos lados na azul, ≥ 75% na
+  amarela — lá as linhas horizontais ficam fora do enquadramento), **o corte cai
+  na beirada do traço** e não no meio dele, **o preto da borda acaba no traço**
+  (moldura não entra junto) e **nenhuma linha da grade sobra no miolo**;
 - **crop em resolução cheia**: a saída é bit-a-bit igual a `original[y1:y2, x1:x2]`;
 - **lossless**: PNG e TIFF relidos do disco batem exatamente com o array em memória;
 - **ordem natural** (`img2` antes de `img10`) e cópia byte-a-byte com MD5;
@@ -745,9 +975,20 @@ Era o sintoma do detector antigo em armadilha azul, e está coberto por teste
 (`test_nenhuma_linha_da_grade_sobra_no_quadrante`). Se voltar a acontecer,
 guarde a foto e rode aquele teste apontando para ela — o diagnóstico sai pronto.
 
+**O quadrante azul saiu com 5400 px de altura**
+Pode ser normal: quando a célula sai pela beirada da foto, abraçar o traço leva
+o corte até a borda. O que diferencia é o sumário — se `Recortadas SEM deteccao`
+for 0, a detecção funcionou. Se for > 0, a altura cheia é a foto inteira
+devolvida sem recorte; confira que `RECORTE_EIXOS` está em `'ambos'` (o
+default), porque `'so_vertical'` entrega a altura cheia de propósito e não serve
+para lote azul. No quadrante azul normal a largura fica em ~4.750 px e a altura
+entre ~4.370 e 5.270 px.
+
 **Fotos ficaram de fora / `Ignoradas` > 0**
-Você está no modo `grid`, que tem exatamente 40 posições. Rode com
-`--modo sequencial`.
+Você está no modo `grid`, que tem exatamente 40 posições — as da **placa
+amarela**. Rode com `--modo sequencial`. Se o lote é de armadilha **azul**, esse
+é o caminho certo sempre, não um contorno: ver
+[Armadilha azul](#armadilha-azul).
 
 **Nomes colidindo entre envios**
 No modo sequencial, cada execução recomeça em `VARD1` e sobrescreve o
@@ -829,11 +1070,15 @@ e escolhe o par **consecutivo** cuja largura é plausível para um quadrante.
 |---|---|---|
 | Azuis com recorte limpo | 7 / 65 | **65 / 65** |
 | Amarelas com recorte limpo | 35 / 40 | **40 / 40** |
-| Dispersão da largura (azul) | ±0,152 | **±0,010** |
-| Dispersão da largura (amarela) | ±0,051 | **±0,009** |
+| Dispersão da largura (azul) | ±0,152 | **±0,004** |
+| Dispersão da largura (amarela) | ±0,051 | **±0,010** |
 
-Junto vieram três mudanças de comportamento:
+Junto vieram quatro mudanças de comportamento:
 
+- **o quadrante sai com os traços da grade.** O corte para na beirada externa
+  de cada linha — o traço entra, e nada depois dele — para que a montagem da
+  placa consiga remontar a grade encostando quadrado em quadrado. `--borda
+  dentro` devolve o quadrante sem traço, como era antes;
 - **o recorte acontece nos quatro lados.** A célula da grade (~4400 px) é menor
   que a altura da foto (5400 px), então entregar a altura inteira deixava a
   linha horizontal e tiras dos quadrantes vizinhos dentro do resultado. Quem
@@ -845,9 +1090,10 @@ Junto vieram três mudanças de comportamento:
   viraram fracionários, então a detecção ficou ~4× mais barata sem mudar o
   resultado.
 
-**Comandos separados por cor?** Não foi preciso: o mesmo comando atende as duas.
-O `--perfil {auto,amarela,azul}` existe como trava opcional para lote difícil e
-**não muda o algoritmo** — só aperta a faixa de largura aceita.
+**Comandos separados por cor?** Não foi preciso no recorte: o mesmo comando
+atende as duas. A única divergência que sobrou é de **nomeação** — o modo `grid`
+é a planta da placa amarela, então lote azul vai de `--modo sequencial`. Tudo
+sobre a azul num lugar só: [Armadilha azul](#armadilha-azul).
 
 ### O lote deixou de ser replicado em disco
 

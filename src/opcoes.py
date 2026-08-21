@@ -65,6 +65,7 @@ class OpcoesProcessamento:
     # --- recorte ---
     formato: str | None = None
     perfil: str | None = None          # cor da armadilha: auto | amarela | azul
+    borda: str | None = None           # linha | dentro | meia_linha
     pular_existentes: bool | None = None
     limpar_saida: bool | None = None
 
@@ -140,6 +141,13 @@ class OpcoesProcessamento:
             raise ValueError(
                 f"Perfil de armadilha invalido: {self.perfil!r}. "
                 f"Validos: {', '.join(settings.RECORTE_PERFIS)}"
+            )
+        self.borda = str(_ou(self.borda,
+                             settings.RECORTE_BORDA)).strip().lower()
+        if self.borda not in settings.RECORTE_BORDAS_VALIDAS:
+            raise ValueError(
+                f"Borda do recorte invalida: {self.borda!r}. "
+                f"Validas: {', '.join(settings.RECORTE_BORDAS_VALIDAS)}"
             )
         self.pular_existentes = bool(_ou(self.pular_existentes,
                                          settings.RECORTE_PULAR_EXISTENTES))
@@ -241,6 +249,12 @@ class OpcoesProcessamento:
             f"  Formato do recorte .......... {self.formato}",
             f"  Armadilha ................... {self.perfil}"
             + (" (amarela e azul)" if self.perfil == "auto" else ""),
+            f"  Linhas da grade ............. {self.borda}"
+            + {
+                settings.RECORTE_BORDA_LINHA: " (o traco inteiro na borda)",
+                settings.RECORTE_BORDA_MEIA_LINHA: " (meio traco de cada lado)",
+                settings.RECORTE_BORDA_DENTRO: " (quadrante sem traco)",
+            }[self.borda],
         ]
         if self.renomeia:
             if self.modo == settings.MODO_SEQUENCIAL:

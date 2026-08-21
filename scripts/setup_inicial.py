@@ -86,6 +86,9 @@ def main() -> int:
     esperados = {
         "RECORTE_FATOR_DETECCAO": 0.125,
         "RECORTE_MARGEM_FRAC": 0.004,
+        "RECORTE_BORDA": "linha",
+        "RECORTE_RECUPERACAO_FRAC": 0.25,
+        "RECORTE_LINHA_INFLADA": 2.0,
         "RECORTE_PERFIL_PADRAO": "auto",
         "RECORTE_ESPESSURA_MAX_FRAC": 0.04,
         "RECORTE_INCLINACAO_MAX_GRAUS": 3.0,
