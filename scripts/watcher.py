@@ -31,8 +31,8 @@ Como funciona
 Uso:
     python scripts/watcher.py --armadilha 14
     python scripts/watcher.py --modo sequencial --tamanho-lote 0
-    python scripts/watcher.py --uma-vez        # processa o que der e sai
-    python scripts/watcher.py --tamanho-lote 20
+    python scripts/watcher.py --armadilha 14 --uma-vez   # processa e sai
+    python scripts/watcher.py --armadilha 14 --tamanho-lote 20
     python scripts/watcher.py --resetar-estado
 """
 

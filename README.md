@@ -465,12 +465,16 @@ Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
 | `python scripts/run_pipeline.py --modo grid --armadilha 14` | `VARD14A1..VARD14H10` + recorte — **armadilha amarela completa** |
 | `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte, sem limite de quantidade — qualquer cor |
-| `python scripts/run_pipeline.py --simular` | mostra o plano de nomes sem gravar nada |
+| `python scripts/run_pipeline.py --modo sequencial --simular` | mostra o plano de nomes sem gravar nada |
 | `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
-| `python scripts/watcher.py` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
-| `python scripts/watcher.py --uma-vez` | um único ciclo do watcher e sai (cron / n8n) |
+| `python scripts/watcher.py --armadilha 14` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
+| `python scripts/watcher.py --armadilha 14 --uma-vez` | um único ciclo do watcher e sai (cron / n8n) |
 | `python -m pytest` | suíte completa de testes |
 | `python tests/fixtures/gerar_fixtures.py` | regera as imagens sintéticas de teste |
+
+> O modo default é o `grid` (`MODO_PADRAO` em `settings.py`), então **todo
+> comando sem `--modo` precisa de `--armadilha N`**. Quem não trabalha por grid
+> costuma deixar `MODO_PADRAO = 'sequencial'` e nunca mais passar nenhum dos dois.
 
 Fluxo típico do dia a dia:
 
@@ -520,7 +524,7 @@ python scripts/run_pipeline.py --modo sequencial --prefixo LAV
 python scripts/run_pipeline.py --modo sequencial --prefixo LAV --digitos 6
 
 # Quadrantes em TIFF LZW em vez de PNG
-python scripts/run_pipeline.py --formato tiff
+python scripts/run_pipeline.py --modo sequencial --formato tiff
 
 # Grid guardando as renomeadas e o ZIP de integridade
 python scripts/run_pipeline.py --modo grid --armadilha 14 --materializar copiar --zip
@@ -562,10 +566,10 @@ O watcher fica rodando e:
    reprocessa nada.
 
 ```powershell
-python scripts/watcher.py --uma-vez          # roda um ciclo e sai (cron / n8n)
-python scripts/watcher.py --workers 12 --retomar
-python scripts/watcher.py --forcar           # ignora o histórico e reprocessa
-python scripts/watcher.py --resetar-estado   # apaga o .watcher_state.json
+python scripts/watcher.py --armadilha 14 --uma-vez   # um ciclo e sai (cron / n8n)
+python scripts/watcher.py --armadilha 14 --workers 12 --retomar
+python scripts/watcher.py --armadilha 14 --forcar    # ignora o histórico e reprocessa
+python scripts/watcher.py --resetar-estado          # apaga o .watcher_state.json
 ```
 
 Encerre com `Ctrl+C` — o estado é salvo antes de sair.
@@ -1087,9 +1091,9 @@ python scripts/watcher.py --modo sequencial --tamanho-lote 0
 O corpo do POST é o mesmo conteúdo do `sumario.json` (lote, modo, contagens,
 falhas, throughput, duração). Usa só a stdlib — sem dependência extra.
 
-**Execução agendada** — `python scripts/watcher.py --uma-vez` roda um ciclo e sai
-com código `0`/`1`/`2`, adequado para Agendador de Tarefas do Windows, cron ou um
-nó *Execute Command* do n8n.
+**Execução agendada** — `python scripts/watcher.py --armadilha 14 --uma-vez` roda
+um ciclo e sai com código `0`/`1`/`2`, adequado para Agendador de Tarefas do
+Windows, cron ou um nó *Execute Command* do n8n.
 
 **Embutido no sistema** — veja [Usando como biblioteca](#usando-como-biblioteca):
 `OpcoesProcessamento` + `executar_processamento` cobrem os três modos sem
