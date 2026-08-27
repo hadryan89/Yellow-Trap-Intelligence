@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
+from src.renomeacao import validar_numero_da_armadilha
 
 __all__ = ["OpcoesProcessamento"]
 
@@ -61,6 +62,10 @@ class OpcoesProcessamento:
     digitos: int | None = None
     indice_inicial: int | None = None
     continuar_numeracao: bool | None = None
+    # Numero sequencial da armadilha - entra no nome do quadrante
+    # (armadilha 14, quadrante G9 -> VARD14G9). Obrigatorio no modo 'grid',
+    # ignorado nos demais.
+    armadilha: int | None = None
 
     # --- recorte ---
     formato: str | None = None
@@ -118,6 +123,11 @@ class OpcoesProcessamento:
         self.criar_zip = bool(_ou(self.criar_zip, settings.RENOMEACAO_CRIAR_ZIP))
         self.limpar_destino_renomeadas = bool(_ou(
             self.limpar_destino_renomeadas, settings.RENOMEACAO_LIMPAR_DESTINO))
+
+        # So o grid nomeia por quadrante; nos outros modos o campo fica
+        # como veio (normalmente None) e nao atrapalha ninguem.
+        if self.modo == settings.MODO_GRID:
+            self.armadilha = validar_numero_da_armadilha(self.armadilha)
 
         self.prefixo = str(_ou(self.prefixo, settings.SEQUENCIAL_PREFIXO))
         self.digitos = int(_ou(self.digitos, settings.SEQUENCIAL_DIGITOS))
@@ -261,7 +271,15 @@ class OpcoesProcessamento:
                 exemplo = f"{self.prefixo}{self.indice_inicial:0{self.digitos}d}"
                 linhas.append(f"  Nomeacao .................... sequencial ({exemplo}...)")
             else:
-                linhas.append("  Nomeacao .................... grid a1..d10")
+                primeiro = (f"{settings.GRID_PREFIXO}{self.armadilha}"
+                            f"{settings.LETRAS_COLUNAS[0]}"
+                            f"{settings.NUMEROS_LINHAS[0]}")
+                ultimo = (f"{settings.GRID_PREFIXO}{self.armadilha}"
+                          f"{settings.LETRAS_COLUNAS[-1]}"
+                          f"{settings.NUMEROS_LINHAS[-1]}")
+                linhas.append(f"  Numero da armadilha ......... {self.armadilha}")
+                linhas.append("  Nomeacao .................... grid "
+                              f"{primeiro}..{ultimo}")
             linhas.append(f"  Materializar renomeadas ..... {self.estrategia_renomeacao}")
             if self.estrategia_renomeacao == settings.ESTRATEGIA_COPIAR:
                 linhas.append(f"  Conferencia MD5 ............. {self.verificar_md5}")

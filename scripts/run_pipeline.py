@@ -3,15 +3,21 @@ Modo BATCH - nomeia e recorta um lote, uma vez.
 
 Dois modos de nomeacao (e um terceiro que nao renomeia):
 
-    --modo grid         a1..d10, ate 40 fotos por lote (padrao historico)
+    --modo grid         VARD<armadilha>A1..VARD<armadilha>H10, ate 80 fotos
+                        por lote - a armadilha inteira (os dois lados do
+                        papel). Exige --armadilha N.
     --modo sequencial   VARD1, VARD2, VARD3, ... sem limite
     --modo recorte      preserva o nome de origem
 
+No modo grid o numero da armadilha entra no nome de cada quadrante, e e ele
+que da rastreio ao acervo: a foto 69 do lote da armadilha 14 vira VARD14G9
+(armadilha 14, coluna G, linha 9).
+
 Uso:
-    python scripts/run_pipeline.py
+    python scripts/run_pipeline.py --modo grid --armadilha 14
     python scripts/run_pipeline.py --modo sequencial --entrada "D:\\envio_42"
     python scripts/run_pipeline.py --modo sequencial --continuar --workers 12
-    python scripts/run_pipeline.py --modo grid --materializar copiar --zip
+    python scripts/run_pipeline.py --modo grid --armadilha 14 --materializar copiar --zip
     python scripts/run_pipeline.py --modo sequencial --simular
     python scripts/run_pipeline.py --modo sequencial --perfil azul
 
@@ -53,8 +59,13 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
                         default=settings.MODO_PADRAO,
-                        help="grid = a1..d10 | sequencial = VARD1 | "
+                        help="grid = VARD<armadilha>A1..H10 | "
+                             "sequencial = VARD1 | "
                              "recorte = mantem o nome de origem")
+    parser.add_argument("--armadilha", type=int, default=None,
+                        help="numero sequencial da armadilha, obrigatorio no "
+                             "modo grid: entra no nome de cada quadrante "
+                             "(--armadilha 14 -> VARD14A1 ... VARD14H10)")
     parser.add_argument("--entrada", type=Path, default=None,
                         help="pasta com as fotos brutas")
     parser.add_argument("--saida", type=Path, default=None,
@@ -123,7 +134,23 @@ def main() -> int:
     args = construir_parser().parse_args()
     configurar_logging(nivel_console="DEBUG" if args.verbose else None)
 
-    opcoes = OpcoesProcessamento(
+    try:
+        opcoes = _montar_opcoes(args)
+    except ValueError as exc:
+        # Parametro errado nao e defeito do programa: o operador precisa da
+        # frase, nao do traceback. Codigo 1 = falha estrutural, igual a
+        # pasta inexistente.
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+
+    sumario = executar_processamento(opcoes)
+    if not sumario.sucesso:
+        return 1
+    return 0 if sumario.total_falhas == 0 else 2
+
+
+def _montar_opcoes(args) -> OpcoesProcessamento:
+    return OpcoesProcessamento(
         modo=args.modo,
         pasta_entrada=args.entrada,
         pasta_recortadas=args.saida,
@@ -133,6 +160,7 @@ def main() -> int:
         perfil=args.perfil,
         borda=args.borda,
         limite=args.limite,
+        armadilha=args.armadilha,
         prefixo=args.prefixo,
         digitos=args.digitos,
         indice_inicial=args.inicio,
@@ -144,11 +172,6 @@ def main() -> int:
         limpar_saida=args.limpar_saida,
         simular=args.simular,
     )
-
-    sumario = executar_processamento(opcoes)
-    if not sumario.sucesso:
-        return 1
-    return 0 if sumario.total_falhas == 0 else 2
 
 
 if __name__ == "__main__":

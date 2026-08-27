@@ -52,9 +52,9 @@ traço nenhum (o comportamento até a 2.0) roda com `--borda dentro`. Ver
 [Os traços da grade no recorte](#os-traços-da-grade-no-recorte).
 
 Uma diferença **de nomeação**, e só ela, separa as duas cores na prática: o modo
-`grid` conhece a planta da placa amarela (40 posições, `a1..d10`) e não conhece a
-da azul. Lote azul vai de `--modo sequencial`. Ver
-[Armadilha azul](#armadilha-azul).
+`grid` conhece a planta da armadilha amarela completa (80 posições, `A1..H10`,
+os dois lados do papel) e não conhece a da azul. Lote azul vai de
+`--modo sequencial`. Ver [Armadilha azul](#armadilha-azul).
 
 ---
 
@@ -85,16 +85,18 @@ da azul. Lote azul vai de `--modo sequencial`. Ver
 ## O pipeline em 2 etapas
 
 ```
-data/01_entrada_bruta/     DSC0001.JPG ... DSC0040.JPG   (nomes da câmera)
+data/01_entrada_bruta/     DSC0001.JPG ... DSC0080.JPG   (nomes da câmera)
         │
-        │  Etapa 1 — nomeação: monta o de-para (a1..d10 ou VARD1, VARD2...)
+        │  Etapa 1 — nomeação: monta o de-para (VARD14A1..VARD14H10
+        │            ou VARD1, VARD2...)
         │            SEM escrever nada em disco
         │
         │  Etapa 2 — recorte do quadrante central, nos 4 lados
         │            (PARALELO, N processos)
         │            grava UM arquivo por foto, já com o nome final
         ▼
-data/03_recortadas/        a1.png … d10.png   ou   VARD1.png, VARD2.png …
+data/03_recortadas/        VARD14A1.png … VARD14H10.png
+                           ou   VARD1.png, VARD2.png …
         │
         └─ data/_relatorios/<lote_id>/sumario.json
 
@@ -139,7 +141,7 @@ comando:
 | `dentro` | na beirada **interna** do traço | quadrante sem traço nenhum (comportamento até a 2.0) |
 | `meia_linha` | no **centro** do traço | metade do traço de cada lado |
 
-O padrão é `linha` porque a etapa seguinte — juntar os 40 quadrantes de volta na
+O padrão é `linha` porque a etapa seguinte — juntar os 80 quadrantes de volta na
 placa — precisa dos traços para remontar a grade. **Não sobra margem**: nem papel,
 nem faixa do quadrante vizinho, nem moldura. A primeira fileira de pixels de cada
 lado já é o traço, então quadrado encosta em quadrado na montagem.
@@ -219,7 +221,7 @@ porque a informação sobre ela estava espalhada pelo documento, e porque há
 | Detecção da grade | mesma função, mesma calibração | **idêntica** — o detector olha geometria, não matiz |
 | Recorte | 4 lados, fatia exata do original | **idêntico** |
 | Gravação / formato / qualidade | PNG, TIFF ou `jpg_max` | **idêntico** |
-| **Nomeação `grid` (`a1..d10`)** | é a planta da placa amarela: 40 posições | **não se aplica** — a planta da placa azul não está mapeada no código |
+| **Nomeação `grid` (`A1..H10`)** | é a planta da armadilha amarela: 80 posições | **não se aplica** — a planta da placa azul não está mapeada no código |
 | `--perfil` | trava opcional | trava opcional |
 
 Só a linha em negrito exige decisão sua. As outras quatro não têm o que
@@ -228,10 +230,11 @@ configurar.
 ### Por que lote azul vai de `--modo sequencial`
 
 O modo `grid` não "recorta em grid" — ele **atribui nomes de posição**
-(`a1`, `a2` … `d10`) assumindo 4 colunas × 10 linhas, que é a planta da placa
-amarela, fixada em `QUANTIDADE_ESPERADA = 40`. Jogar um lote azul nesse modo não
-produz recorte errado; produz **nome errado**, e descarta como `Ignoradas` tudo
-que passar da 40ª foto (o acervo azul de referência tem 65).
+(`VARD14A1`, `VARD14A2` … `VARD14H10`) assumindo 8 colunas × 10 linhas, que é a
+planta da armadilha amarela inteira, fixada em `QUANTIDADE_ESPERADA = 80`. Jogar
+um lote azul nesse modo não produz recorte errado; produz **nome errado** — cada
+quadrante sai carimbado com uma posição da planta amarela que não corresponde ao
+papel azul — e descarta como `Ignoradas` tudo que passar da 80ª foto.
 
 ```powershell
 # Certo para azul: nomeia VARD1, VARD2 … sem teto de quantidade
@@ -342,15 +345,15 @@ arquivo de saída** — o recorte é bit-a-bit o mesmo.
 
 | Modo | Nomes gerados | Limite de fotos | Serve para |
 |---|---|---|---|
-| `grid` | `a1, a2 … d10` (posição na **placa amarela**) | 40 (as posições do grid) | lote de placa amarela completa |
+| `grid` | `VARD14A1, VARD14A2 … VARD14H10` (nº da armadilha + posição na **placa amarela**) | 80 (as posições do grid) | lote de armadilha amarela completa — exige `--armadilha N` |
 | `sequencial` | `VARD1, VARD2, VARD3 …` | nenhum | qualquer lote, **inclusive azul** |
 | `recorte` | preserva o nome de origem | nenhum | quando o nome de origem já é a referência |
 
 A materialização default é `virtual` nos três.
 
 ```powershell
-# O padrão de sempre: 40 fotos da placa amarela viram a1..d10 recortadas
-python scripts/run_pipeline.py --modo grid
+# O padrão de sempre: as 80 fotos da armadilha 14 viram VARD14A1..VARD14H10
+python scripts/run_pipeline.py --modo grid --armadilha 14
 
 # Só renomear (VARD1, VARD2…) e recortar — qualquer tamanho, qualquer cor
 python scripts/run_pipeline.py --modo sequencial
@@ -359,9 +362,32 @@ python scripts/run_pipeline.py --modo sequencial
 python scripts/run_pipeline.py --modo recorte
 ```
 
-No modo `grid`, fotos que passarem das 40 posições **não são processadas** — e
+No modo `grid`, fotos que passarem das 80 posições **não são processadas** — e
 isso aparece como `ERROR` no log e no sumário (`Ignoradas`), nunca como um
 descarte silencioso. Lote maior que o grid → use `--modo sequencial`.
+
+#### O nome de rastreio: `VARD14G9`
+
+No modo `grid` o nome do quadrante é montado com três pedaços, e é ele que dá
+rastreio ao acervo:
+
+```
+VARD      14           G9
+└ prefixo └ armadilha  └ quadrante (coluna A..H + linha 1..10)
+```
+
+O número da armadilha vem de `--armadilha N` e **não tem default** — sem ele o
+pipeline recusa o lote antes de gravar qualquer coisa. Sem esse número, dois
+lotes seguidos gerariam exatamente os mesmos 80 nomes e o segundo sobrescreveria
+o primeiro, sem erro nenhum.
+
+As 80 posições são percorridas **coluna a coluna**, na ordem em que as fotos
+chegam (ordem natural do nome): `A1, A2 … A10, B1 … B10, … H1 … H10`. As colunas
+`A..D` cobrem um lado do papel e `E..H` o outro. A 69ª foto do lote, portanto,
+vira `VARD14G9`.
+
+O número não leva zeros à esquerda (`VARD14G9`, não `VARD014G9`): como o
+quadrante sempre começa por letra, o nome continua decodificável sem ambiguidade.
 
 > O `grid` é a planta da **placa amarela**, não uma propriedade do recorte. Lote
 > de armadilha azul deve usar `--modo sequencial` (ou `--modo recorte`); ver
@@ -437,7 +463,7 @@ Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
 | Comando | O que faz |
 |---|---|
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
-| `python scripts/run_pipeline.py --modo grid` | padrão histórico: a1..d10 + recorte — **placa amarela** |
+| `python scripts/run_pipeline.py --modo grid --armadilha 14` | `VARD14A1..VARD14H10` + recorte — **armadilha amarela completa** |
 | `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte, sem limite de quantidade — qualquer cor |
 | `python scripts/run_pipeline.py --simular` | mostra o plano de nomes sem gravar nada |
 | `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
@@ -451,7 +477,7 @@ Fluxo típico do dia a dia:
 ```powershell
 .\.venv\Scripts\Activate.ps1                   # ativa o ambiente
 # copie as fotos para data\01_entrada_bruta\
-python scripts/run_pipeline.py --modo grid     # quadrantes em data\03_recortadas\
+python scripts/run_pipeline.py --modo grid --armadilha 14   # -> data\03_recortadas\
 ```
 
 **Código de saída** (útil no n8n / Agendador de Tarefas):
@@ -497,7 +523,7 @@ python scripts/run_pipeline.py --modo sequencial --prefixo LAV --digitos 6
 python scripts/run_pipeline.py --formato tiff
 
 # Grid guardando as renomeadas e o ZIP de integridade
-python scripts/run_pipeline.py --modo grid --materializar copiar --zip
+python scripts/run_pipeline.py --modo grid --armadilha 14 --materializar copiar --zip
 
 # Lote de armadilha AZUL (o grid não vale para ela — ver "Armadilha azul")
 python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_azuis"
@@ -509,7 +535,7 @@ python scripts/run_pipeline.py --modo sequencial --borda dentro
 ### Modo watcher (contínuo, vigiando a pasta)
 
 ```powershell
-python scripts/watcher.py                               # grid, lote de 40
+python scripts/watcher.py --armadilha 14                # grid, lote de 80
 python scripts/watcher.py --modo sequencial --tamanho-lote 0
 ```
 
@@ -519,9 +545,14 @@ O watcher fica rodando e:
 2. Só considera um arquivo pronto depois que o **tamanho fica estável por 2
    ciclos** — evita processar foto pela metade enquanto o cartão ainda copia.
 3. Fecha o lote de dois jeitos, conforme a operação:
-   - **por contagem** (`--tamanho-lote 40`, default): agrupa por prefixo do nome
-     (`IMG_001…IMG_040` → grupo `IMG_`) e só dispara com o grupo completo. Lote
-     incompleto **nunca** é processado — avisa a cada 30 s quantas fotos faltam;
+   - **por contagem** (`--tamanho-lote 80`, default): agrupa por prefixo do nome
+     (`IMG_001…IMG_080` → grupo `IMG_`) e só dispara com o grupo completo. Lote
+     incompleto **nunca** é processado — avisa a cada 30 s quantas fotos faltam.
+     No modo `grid` cada lote fechado é uma **armadilha**: o número de
+     `--armadilha` vale para o primeiro lote e avança de um em um a cada lote
+     seguinte (`14 → 15 → 16 …`). O número atual fica gravado no
+     `.watcher_state.json`, então reiniciar o watcher com o mesmo `--armadilha 14`
+     continua de onde parou em vez de sobrescrever o acervo;
    - **por quietude** (`--tamanho-lote 0`): passados 30 s sem chegar arquivo
      novo, processa tudo que estiver estável — sejam 12 ou 12.000 fotos. É o
      modo certo para "alguém subiu uma pasta inteira".
@@ -553,6 +584,7 @@ from src.pipeline import executar_processamento
 
 opcoes = OpcoesProcessamento(
     modo="sequencial",                 # "grid" | "sequencial" | "recorte"
+    # armadilha=14,                    # obrigatório quando modo="grid"
     pasta_entrada="D:/uploads/job_42",
     pasta_recortadas="D:/saida/job_42",
     workers=12,
@@ -664,10 +696,12 @@ yellowtrap_pipeline/
 └── tests/
     ├── fixtures/gerar_fixtures.py    gera as imagens sintéticas (amarela e azul)
     ├── test_opcoes.py                contrato de entrada
-    ├── test_renomeacao.py
+    ├── test_renomeacao.py            plano de nomes (grid e sequencial)
     ├── test_recorte.py               detecção da grade e crop
     ├── test_recorte_acervo.py        regressão contra as fotos reais em data/
-    └── test_pipeline.py              integração + paralelismo + modos
+    ├── test_pipeline.py              integração + paralelismo + modos
+    ├── test_watcher.py               numeração das armadilhas entre lotes
+    └── test_cli.py                   erro de parâmetro sai como frase
 ```
 
 Nos módulos `src/`, os blocos marcados como
@@ -726,6 +760,10 @@ Ele é pulado automaticamente quando o acervo não está no disco.
 | Parâmetro | Default | O que faz |
 |---|---|---|
 | `MODO_PADRAO` | `'grid'` | modo usado quando ninguém passa `--modo` |
+| `GRID_PREFIXO` | `'VARD'` | prefixo do nome no modo `grid` (`VARD` + armadilha + quadrante) |
+| `LETRAS_COLUNAS` | `['A'…'H']` | colunas do grid — 8 colunas cobrem os dois lados da armadilha |
+| `NUMEROS_LINHAS` | `1…10` | linhas do grid |
+| `QUANTIDADE_ESPERADA` | `80` | posições do grid (8 × 10) — o tamanho de um lote de armadilha completa |
 | `SEQUENCIAL_PREFIXO` | `'VARD'` | prefixo do nome sequencial |
 | `SEQUENCIAL_DIGITOS` | `1` | largura **mínima** do contador: `1` → `VARD1, VARD2, VARD10`; `7` → `VARD0000001…` |
 | `SEQUENCIAL_INICIO` | `1` | número da primeira foto do lote — o acervo começa em `VARD1`, não existe `VARD0` |
@@ -787,9 +825,9 @@ Impresso no console e salvo em `data/_relatorios/<lote_id>/sumario.json`:
 ====================================================================
 SUMARIO DO LOTE 20260815_110928  (modo: grid)
 ====================================================================
-  Fotos de entrada .............. 40
-  Nomeadas ...................... 40
-  Recortadas com sucesso ........ 40
+  Fotos de entrada .............. 80
+  Nomeadas ...................... 80
+  Recortadas com sucesso ........ 80
   Recortadas SEM deteccao ....... 1       ← exige conferência visual
   Falhas ........................ 0
   Pasta de saida ................ ...\data\03_recortadas
@@ -832,7 +870,7 @@ Toda falha gera um `.json` em `data/_falhas/<lote_id>/`:
 | **Imagem ilegível/corrompida** | quadrante não é gerado; entra em `Falhas` | só se estiver numa pasta intermediária (ver abaixo) |
 | **MD5 divergente na renomeação** | cópia rejeitada | sim, vai para `_falhas/` |
 | **Detecção da grade falhou** | quadrante é salvo com a **imagem cheia, sem recorte** + `WARNING` | **não** — só o JSON de diagnóstico |
-| **Foto além das 40 posições (modo grid)** | não é processada; entra em `Ignoradas` + `ERROR`. Causa comum: lote de placa azul no modo `grid` | não |
+| **Foto além das 80 posições (modo grid)** | não é processada; entra em `Ignoradas` + `ERROR`. Causa comum: duas armadilhas no mesmo envio, ou lote de placa azul no modo `grid` | não |
 
 > **O arquivo original do usuário nunca é movido.** Quando o recorte lê direto
 > da pasta de entrada (estratégia `virtual`), a foto problemática fica onde
@@ -905,6 +943,16 @@ primeira execução — nada de binário no repositório.
 - **ordem natural** (`img2` antes de `img10`) e cópia byte-a-byte com MD5;
 - **plano sequencial** sem teto de quantidade, com índice inicial e continuação
   da numeração;
+- **o grid exige o número da armadilha**: sem `--armadilha`, ou com `0`/negativo,
+  o lote é recusado *antes* de qualquer gravação, e os nomes gerados vão de
+  `VARD14A1` a `VARD14H10` na ordem coluna a coluna
+  (`test_grid_exige_o_numero_da_armadilha`);
+- **o watcher não reusa número de armadilha**: cada lote fechado avança um, o
+  número gravado no estado vence um `--armadilha` atrasado depois de um
+  reinício, e um número pedido à frente do histórico vence (`test_watcher.py`);
+- **erro de parâmetro sai como frase, não como traceback**: `--modo grid` sem
+  `--armadilha` termina com código `1` e uma linha dizendo o que falta, no
+  `run_pipeline.py` e no `watcher.py` (`test_cli.py`);
 - **estratégias de materialização**: `virtual` não escreve nada, `mover` esvazia
   a origem, cópia em paralelo não embaralha a ordem;
 - **nenhuma duplicação do lote**: 30 fotos de entrada produzem 30 arquivos de
@@ -985,8 +1033,10 @@ para lote azul. No quadrante azul normal a largura fica em ~4.750 px e a altura
 entre ~4.370 e 5.270 px.
 
 **Fotos ficaram de fora / `Ignoradas` > 0**
-Você está no modo `grid`, que tem exatamente 40 posições — as da **placa
-amarela**. Rode com `--modo sequencial`. Se o lote é de armadilha **azul**, esse
+Você está no modo `grid`, que tem exatamente 80 posições — as da **armadilha
+amarela completa**. Se o envio traz mais de uma armadilha, processe uma por vez
+(`--armadilha 14`, depois `--armadilha 15`); se não é lote de grid, rode com
+`--modo sequencial`. Se o lote é de armadilha **azul**, esse
 é o caminho certo sempre, não um contorno: ver
 [Armadilha azul](#armadilha-azul).
 
@@ -1016,7 +1066,7 @@ O `tqdm` escreve na saída de erro padrão e o PowerShell marca isso como
 `PARALELISMO_CHUNK_TQDM = False` em `settings.py`.
 
 **Watcher não dispara**
-Confira: (1) no modo por contagem, o grupo já tem 40 fotos com o **mesmo
+Confira: (1) no modo por contagem, o grupo já tem 80 fotos com o **mesmo
 prefixo**? Nomes misturados formam grupos diferentes — para envios heterogêneos
 use `--tamanho-lote 0`; (2) as fotos já foram processadas antes? Veja
 `.watcher_state.json` — use `--forcar`; (3) `watchdog` está instalado? Sem ele o
@@ -1052,6 +1102,45 @@ rastreável pelo `sumario.json`.
 ---
 
 ## Mudanças recentes
+
+### O grid virou a armadilha inteira, e o nome carrega o número dela
+
+**Antes:** o modo `grid` nomeava `a1..d10` — 40 posições, um lado do papel — e
+não pedia nada a quem chamava. Dois lotes seguidos geravam exatamente os mesmos
+40 nomes: o segundo sobrescrevia o primeiro em `03_recortadas/`, sem erro nenhum
+e sem nada no arquivo dizendo de que armadilha ele era.
+
+**Agora:** o grid é a armadilha **completa** — 8 colunas (`A..H`) × 10 linhas =
+**80 posições**, sendo `A..D` um lado do papel e `E..H` o outro — e o nome do
+quadrante carrega o número da armadilha:
+
+```
+VARD      14           G9
+└ prefixo └ armadilha  └ quadrante (coluna A..H + linha 1..10)
+```
+
+| | Antes | Agora |
+|---|---|---|
+| Nomes gerados | `a1 … d10` | `VARD14A1 … VARD14H10` |
+| Posições no grid | 40 (um lado) | 80 (os dois lados) |
+| `QUANTIDADE_ESPERADA` | `40` | `80` |
+| Número da armadilha | não existia | `--armadilha N`, **obrigatório** no grid |
+| Dois lotes seguidos | mesmos nomes, sobrescrita silenciosa | nomes distintos, rastreáveis |
+
+O número **não tem default de propósito**: quem está processando é quem sabe
+qual armadilha está na mesa, e um chute viraria acervo errado. Sem ele,
+`run_pipeline.py` e `watcher.py` param na entrada com código `1` e uma frase
+dizendo o que falta — nunca depois de já ter gravado quadrante.
+
+No watcher, cada lote fechado é uma armadilha: `--armadilha 14` vale para o
+primeiro lote e o número avança de um em um a cada lote seguinte, ficando
+gravado no `.watcher_state.json` para que um reinício continue de onde parou em
+vez de reusar um número.
+
+**O que muda para quem já usava:** `python scripts/run_pipeline.py --modo grid`
+sozinho passou a ser erro — acrescente `--armadilha N`. Os modos `sequencial` e
+`recorte` não mudaram em nada, e o **recorte continua idêntico nos três**: isto
+é uma mudança de nomeação, não de pixels.
 
 ### O recorte passou a atender a armadilha azul
 
@@ -1092,7 +1181,7 @@ Junto vieram quatro mudanças de comportamento:
 
 **Comandos separados por cor?** Não foi preciso no recorte: o mesmo comando
 atende as duas. A única divergência que sobrou é de **nomeação** — o modo `grid`
-é a planta da placa amarela, então lote azul vai de `--modo sequencial`. Tudo
+é a planta da armadilha amarela, então lote azul vai de `--modo sequencial`. Tudo
 sobre a azul num lugar só: [Armadilha azul](#armadilha-azul).
 
 ### O lote deixou de ser replicado em disco
@@ -1104,7 +1193,7 @@ Antes de recortar, ele gravava uma cópia byte-a-byte de cada foto em
 fotos viravam 90 arquivos.
 
 **Agora:** todos os modos usam a estratégia `virtual`. O nome novo é carimbado
-direto no arquivo do recorte, que já nasce como `VARD1.png` / `a1.png`. **Uma
+direto no arquivo do recorte, que já nasce como `VARD1.png` / `VARD14A1.png`. **Uma
 foto de entrada gera exatamente um arquivo de saída.**
 
 | | Antes | Agora |
@@ -1123,7 +1212,7 @@ Se você precisar mesmo das fotos renomeadas em disco (auditoria, conferência
 MD5), peça explicitamente — mas saiba que isso volta a duplicar o lote:
 
 ```powershell
-python scripts/run_pipeline.py --modo grid --materializar copiar
+python scripts/run_pipeline.py --modo grid --armadilha 14 --materializar copiar
 ```
 
 Nesse caso o log emite um `WARNING` dizendo quantas cópias extras serão criadas,

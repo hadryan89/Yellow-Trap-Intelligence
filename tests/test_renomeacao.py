@@ -5,6 +5,8 @@ Pontos criticos:
   * ordem natural (img2 antes de img10) - se a ordem quebrar, todo o de-para
     sai trocado;
   * a copia tem que ser byte-a-byte identica (MD5 conferido);
+  * o grid da armadilha completa tem 80 posicoes (A1..H10) e o nome carrega
+    o numero da armadilha (VARD14G9);
   * o plano sequencial (VARD1, VARD2, ...) nao pode ter teto de quantidade;
   * a estrategia 'virtual' nao pode escrever nada em disco;
   * o ZIP tem que ser ZIP_STORED (sem recompressao).
@@ -23,6 +25,7 @@ from src.renomeacao import (
     criar_zip_sem_compressao,
     executar_renomeacao,
     gerar_mapeamento,
+    mapear_grid,
     mapear_sequencial,
     natural_key,
     planejar_nomeacao,
@@ -63,42 +66,93 @@ def test_ordem_natural_ignora_caixa():
 # ---------------------------------------------------------------------------
 
 
+def test_o_grid_da_armadilha_completa_tem_oitenta_posicoes():
+    """
+    Uma armadilha inteira sao os DOIS lados: 8 colunas (A..H) x 10 linhas.
+
+    Antes so um lado era mapeado (A..D, 40 quadrantes) e a outra metade do
+    papel ficava sem posicao no grid.
+    """
+    assert settings.LETRAS_COLUNAS == ["A", "B", "C", "D", "E", "F", "G", "H"]
+    assert settings.NUMEROS_LINHAS == list(range(1, 11))
+    assert settings.QUANTIDADE_ESPERADA == 80
+
+
 def test_mapeamento_segue_a_ordem_do_grid(tmp_path):
-    nomes = [f"DSC{i:04d}.JPG" for i in range(1, 41)]
+    nomes = [f"DSC{i:04d}.JPG" for i in range(1, 81)]
     _criar_fotos(tmp_path, nomes)
 
     mapeamento, total_arquivos, total_alvos = gerar_mapeamento(
-        tmp_path, settings.LETRAS_COLUNAS, settings.NUMEROS_LINHAS
+        tmp_path, settings.LETRAS_COLUNAS, settings.NUMEROS_LINHAS,
+        armadilha=14,
     )
 
-    assert total_arquivos == 40 and total_alvos == 40
-    assert mapeamento[0] == ("DSC0001.JPG", "a1.jpg")
-    assert mapeamento[9] == ("DSC0010.JPG", "a10.jpg")
-    assert mapeamento[10] == ("DSC0011.JPG", "b1.jpg")
-    assert mapeamento[-1] == ("DSC0040.JPG", "d10.jpg")
+    assert total_arquivos == 80 and total_alvos == 80
+    assert mapeamento[0] == ("DSC0001.JPG", "VARD14A1.jpg")
+    assert mapeamento[9] == ("DSC0010.JPG", "VARD14A10.jpg")
+    assert mapeamento[10] == ("DSC0011.JPG", "VARD14B1.jpg")
+    assert mapeamento[-1] == ("DSC0080.JPG", "VARD14H10.jpg")
+
+
+def test_grid_nomeia_com_a_armadilha_e_o_quadrante(tmp_path):
+    """O nome de rastreio e VARD + numero da armadilha + quadrante: VARD14G9."""
+    caminhos = _criar_fotos(tmp_path, [f"DSC{i:04d}.jpg" for i in range(1, 81)])
+
+    itens, total_alvos = mapear_grid(caminhos, armadilha=14)
+
+    assert total_alvos == 80
+    # G e a 7a coluna (6 colunas completas antes dela) e 9 e a 9a linha.
+    assert itens[6 * 10 + 8].stem_novo == "VARD14G9"
+    assert itens[0].stem_novo == "VARD14A1"
+    assert itens[-1].stem_novo == "VARD14H10"
+
+
+def test_grid_de_outra_armadilha_nao_colide_com_a_anterior(tmp_path):
+    """Trocar a armadilha troca o nome inteiro - dois lotes convivem na saida."""
+    caminhos = _criar_fotos(tmp_path, ["DSC1.jpg"])
+
+    itens_14, _ = mapear_grid(caminhos, armadilha=14)
+    itens_15, _ = mapear_grid(caminhos, armadilha=15)
+
+    assert itens_14[0].stem_novo == "VARD14A1"
+    assert itens_15[0].stem_novo == "VARD15A1"
+
+
+def test_grid_sem_o_numero_da_armadilha_recusa_a_nomear(tmp_path):
+    """
+    Sem armadilha o nome sairia sem rastreio (VARDA1) e cada lote novo
+    sobrescreveria o anterior. Melhor abortar do que gravar 80 quadrantes
+    irrecuperaveis.
+    """
+    caminhos = _criar_fotos(tmp_path, ["DSC1.jpg"])
+    with pytest.raises(ValueError, match="armadilha"):
+        mapear_grid(caminhos)
 
 
 def test_mapeamento_normaliza_a_extensao_para_minusculo(tmp_path):
     _criar_fotos(tmp_path, ["FOTO1.JPG", "FOTO2.JPEG"])
-    mapeamento, _, _ = gerar_mapeamento(tmp_path, ["a"], [1, 2])
-    assert mapeamento == [("FOTO1.JPG", "a1.jpg"), ("FOTO2.JPEG", "a2.jpeg")]
+    mapeamento, _, _ = gerar_mapeamento(tmp_path, ["A"], [1, 2], armadilha=14)
+    assert mapeamento == [("FOTO1.JPG", "VARD14A1.jpg"),
+                          ("FOTO2.JPEG", "VARD14A2.jpeg")]
 
 
 def test_mapeamento_com_menos_fotos_que_posicoes(tmp_path):
     _criar_fotos(tmp_path, [f"IMG_{i}.jpg" for i in range(1, 6)])
     mapeamento, total_arquivos, total_alvos = gerar_mapeamento(
-        tmp_path, settings.LETRAS_COLUNAS, settings.NUMEROS_LINHAS
+        tmp_path, settings.LETRAS_COLUNAS, settings.NUMEROS_LINHAS,
+        armadilha=14,
     )
-    assert total_arquivos == 5 and total_alvos == 40
+    assert total_arquivos == 5 and total_alvos == 80
     assert len(mapeamento) == 5
-    assert mapeamento[-1][1] == "a5.jpg"
+    assert mapeamento[-1][1] == "VARD14A5.jpg"
 
 
 def test_mapeamento_ignora_extensoes_nao_suportadas(tmp_path):
     _criar_fotos(tmp_path, ["IMG_1.jpg", "notas.txt", "planilha.xlsx"])
-    mapeamento, total_arquivos, _ = gerar_mapeamento(tmp_path, ["a"], [1, 2])
+    mapeamento, total_arquivos, _ = gerar_mapeamento(tmp_path, ["A"], [1, 2],
+                                                     armadilha=14)
     assert total_arquivos == 1
-    assert mapeamento == [("IMG_1.jpg", "a1.jpg")]
+    assert mapeamento == [("IMG_1.jpg", "VARD14A1.jpg")]
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +191,7 @@ def test_sequencial_aceita_largura_fixa_se_pedida(tmp_path):
 
 
 def test_sequencial_nao_tem_teto_de_quantidade(tmp_path):
-    """O grid para em 40; o sequencial precisa aguentar o lote inteiro."""
+    """O grid para em 80; o sequencial precisa aguentar o lote inteiro."""
     nomes = [f"IMG_{i:05d}.jpg" for i in range(1, 2001)]
     caminhos = [tmp_path / nome for nome in nomes]  # sem tocar no disco
 
@@ -175,11 +229,23 @@ def test_proximo_indice_em_pasta_vazia_usa_o_inicio(tmp_path):
 def test_plano_do_grid_marca_o_que_ficou_de_fora(tmp_path):
     caminhos = _criar_fotos(tmp_path, [f"IMG_{i}.jpg" for i in range(1, 6)])
     plano = planejar_nomeacao(caminhos, modo=settings.MODO_GRID,
-                              letras=["a"], numeros=[1, 2])
+                              armadilha=14, letras=["A"], numeros=[1, 2])
 
     assert len(plano) == 2
     assert plano.total_arquivos == 5
     assert plano.ignorados == ["IMG_3.jpg", "IMG_4.jpg", "IMG_5.jpg"]
+
+
+def test_plano_do_grid_para_na_octogesima_foto(tmp_path):
+    """A 81a foto de um lote nao entra: o grid da armadilha acabou em H10."""
+    caminhos = [tmp_path / f"IMG_{i:03d}.jpg" for i in range(1, 86)]
+
+    plano = planejar_nomeacao(caminhos, modo=settings.MODO_GRID, armadilha=14)
+
+    assert len(plano) == 80
+    assert plano.total_alvos == 80
+    assert plano.itens[-1].stem_novo == "VARD14H10"
+    assert plano.ignorados == [f"IMG_{i:03d}.jpg" for i in range(81, 86)]
 
 
 def test_modo_recorte_preserva_o_nome(tmp_path):
@@ -281,14 +347,14 @@ def test_copia_e_byte_a_byte_identica(tmp_path):
     origem = tmp_path / "origem"
     destino = tmp_path / "destino"
     origem.mkdir()
-    _criar_fotos(origem, [f"IMG_{i}.jpg" for i in range(1, 41)])
+    _criar_fotos(origem, [f"IMG_{i}.jpg" for i in range(1, 81)])
 
     mapeamento, _, _ = gerar_mapeamento(origem, settings.LETRAS_COLUNAS,
-                                        settings.NUMEROS_LINHAS)
+                                        settings.NUMEROS_LINHAS, armadilha=14)
     hashes, falhas = renomear_com_verificacao(origem, destino, mapeamento)
 
     assert falhas == []
-    assert len(hashes) == 40
+    assert len(hashes) == 80
     for original, novo in mapeamento:
         assert (destino / novo).read_bytes() == (origem / original).read_bytes()
         assert hashes[novo] == calcular_hash_md5(origem / original)
@@ -300,7 +366,7 @@ def test_original_permanece_intacto(tmp_path):
     origem.mkdir()
     _criar_fotos(origem, ["IMG_1.jpg", "IMG_2.jpg"])
 
-    mapeamento, _, _ = gerar_mapeamento(origem, ["a"], [1, 2])
+    mapeamento, _, _ = gerar_mapeamento(origem, ["A"], [1, 2], armadilha=14)
     renomear_com_verificacao(origem, tmp_path / "destino", mapeamento)
 
     assert (origem / "IMG_1.jpg").exists()
@@ -315,11 +381,11 @@ def test_destino_e_limpo_antes_de_copiar(tmp_path):
     (destino / "lixo_do_lote_anterior.png").write_bytes(b"antigo")
     _criar_fotos(origem, ["IMG_1.jpg"])
 
-    mapeamento, _, _ = gerar_mapeamento(origem, ["a"], [1])
+    mapeamento, _, _ = gerar_mapeamento(origem, ["A"], [1], armadilha=14)
     renomear_com_verificacao(origem, destino, mapeamento, limpar_destino=True)
 
     assert not (destino / "lixo_do_lote_anterior.png").exists()
-    assert (destino / "a1.jpg").exists()
+    assert (destino / "VARD14A1.jpg").exists()
 
 
 def test_md5_e_calculado_em_chunks(tmp_path):
@@ -388,24 +454,24 @@ def test_executar_renomeacao_ponta_a_ponta(pastas_isoladas, monkeypatch):
     monkeypatch.setattr(settings, "RENOMEACAO_CRIAR_ZIP", True)
     monkeypatch.setattr(settings, "RENOMEACAO_VERIFICAR_ZIP", True)
     entrada = pastas_isoladas["PASTA_ENTRADA"]
-    _criar_fotos(entrada, [f"IMG_{i:03d}.jpg" for i in range(1, 41)])
+    _criar_fotos(entrada, [f"IMG_{i:03d}.jpg" for i in range(1, 81)])
 
-    relatorio = executar_renomeacao(lote_id="LOTE_TESTE")
+    relatorio = executar_renomeacao(lote_id="LOTE_TESTE", armadilha=14)
 
-    assert relatorio["total_arquivos"] == 40
-    assert len(relatorio["hashes"]) == 40
+    assert relatorio["total_arquivos"] == 80
+    assert len(relatorio["hashes"]) == 80
     assert relatorio["falhas"] == []
     assert relatorio["zip_ok"] is True
-    assert (pastas_isoladas["PASTA_RENOMEADAS"] / "a1.jpg").exists()
-    assert (pastas_isoladas["PASTA_RENOMEADAS"] / "d10.jpg").exists()
+    assert (pastas_isoladas["PASTA_RENOMEADAS"] / "VARD14A1.jpg").exists()
+    assert (pastas_isoladas["PASTA_RENOMEADAS"] / "VARD14H10.jpg").exists()
 
 
 def test_executar_renomeacao_sem_fotos_levanta(pastas_isoladas):
     with pytest.raises(ValueError, match="Nenhuma imagem"):
-        executar_renomeacao()
+        executar_renomeacao(armadilha=14)
 
 
 def test_executar_renomeacao_com_pasta_inexistente_levanta(pastas_isoladas,
                                                            tmp_path):
     with pytest.raises(FileNotFoundError):
-        executar_renomeacao(pasta_origem=tmp_path / "nao_existe")
+        executar_renomeacao(pasta_origem=tmp_path / "nao_existe", armadilha=14)

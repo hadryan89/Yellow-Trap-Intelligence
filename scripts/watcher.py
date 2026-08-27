@@ -11,10 +11,13 @@ Como funciona
    enquanto a camera/cartao ainda esta copiando.
 4. O criterio de FECHAMENTO do lote depende do modo:
 
-   * modo grid (--tamanho-lote N, default 40): o lote so fecha quando o
+   * modo grid (--tamanho-lote N, default 80): o lote so fecha quando o
      grupo atinge N fotos estaveis. Lote INCOMPLETO nunca e processado - o
      watcher espera indefinidamente, avisando por WARNING a cada
-     WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG segundos quantas fotos faltam;
+     WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG segundos quantas fotos faltam.
+     Cada lote fechado e uma ARMADILHA: o numero informado em --armadilha
+     vale para o primeiro lote e avanca de um em um a cada lote seguinte,
+     ficando gravado no estado para o reinicio nao reusar um numero;
    * modo sequencial (--tamanho-lote 0): nao existe "tamanho certo". O lote
      fecha por QUIETUDE - passados WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG
      segundos sem chegar arquivo novo, tudo o que estiver estavel e
@@ -26,7 +29,7 @@ Como funciona
    reprocessa nada.
 
 Uso:
-    python scripts/watcher.py
+    python scripts/watcher.py --armadilha 14
     python scripts/watcher.py --modo sequencial --tamanho-lote 0
     python scripts/watcher.py --uma-vez        # processa o que der e sai
     python scripts/watcher.py --tamanho-lote 20
@@ -90,6 +93,25 @@ def carregar_estado(caminho: Path) -> dict:
     except Exception as exc:
         logger.error("Estado corrompido (%s): %s. Recomecando do zero.", caminho, exc)
         return {"versao": 1, "lotes": {}, "arquivos_processados": {}}
+
+
+def proxima_armadilha(estado: dict, inicio: int) -> int:
+    """
+    Numero da armadilha do proximo lote fechado no modo grid.
+
+    Cada lote fechado e uma armadilha diferente, e o numero entra no nome de
+    todos os 80 quadrantes - repetir um numero sobrescreveria o lote anterior
+    no acervo, sem erro nenhum. Por isso o historico do estado manda: depois
+    de fechar a armadilha 16, reiniciar o watcher com --armadilha 14 continua
+    em 17. Pedir um numero A FRENTE do historico (--armadilha 20) e uma
+    decisao deliberada do operador e vence.
+    """
+    try:
+        ultima = int(estado.get("ultima_armadilha"))
+    except (TypeError, ValueError):
+        # Estado antigo (sem o campo) ou corrompido: vale o que foi pedido.
+        return inicio
+    return max(ultima + 1, inicio)
 
 
 def salvar_estado(caminho: Path, estado: dict) -> None:
@@ -208,7 +230,7 @@ def arquivar_lote(arquivos: list[Path], lote_id: str) -> Path:
     """
     Move (ou copia) as fotos do lote para 01_entrada_bruta/_lotes/<lote_id>/.
 
-    Isolar o lote garante que a renomeacao mapeie exatamente estas 40 fotos,
+    Isolar o lote garante que a renomeacao mapeie exatamente estas 80 fotos,
     sem misturar com sobras de lotes anteriores.
     """
     destino = settings.PASTA_LOTES_ARQUIVADOS / lote_id
@@ -236,6 +258,12 @@ def processar_lote(arquivos: list[Path], estado: dict, caminho_estado: Path,
     logger.info("=" * 68)
     logger.info("LOTE FECHADO: %d foto(s) (%s ... %s)",
                 len(arquivos), nomes[0], nomes[-1])
+    if opcoes_base.armadilha is not None:
+        logger.info("Armadilha %s: os quadrantes sairao como %s%sA1 ... %s%s%s%s",
+                    opcoes_base.armadilha,
+                    settings.GRID_PREFIXO, opcoes_base.armadilha,
+                    settings.GRID_PREFIXO, opcoes_base.armadilha,
+                    settings.LETRAS_COLUNAS[-1], settings.NUMEROS_LINHAS[-1])
 
     pasta_lote = arquivar_lote(arquivos, lote_id)
 
@@ -256,7 +284,13 @@ def processar_lote(arquivos: list[Path], estado: dict, caminho_estado: Path,
         "falhas": sumario.total_falhas,
         "pasta_saida": sumario.pasta_saida,
         "duracao_seg": round(sumario.duracao_seg, 2),
+        "armadilha": opcoes_base.armadilha,
     }
+    if opcoes_base.armadilha is not None:
+        # Gravado mesmo se o lote falhou: as fotos ja foram arquivadas em
+        # _lotes/<lote_id>/ e reprocessar com o MESMO numero e uma decisao
+        # manual (--armadilha N), nunca do lote seguinte.
+        estado["ultima_armadilha"] = opcoes_base.armadilha
     for nome in nomes:
         estado["arquivos_processados"][nome] = {"lote": lote_id, "em": processado_em}
     _podar_estado(estado)
@@ -291,8 +325,21 @@ def loop(args) -> int:
 
     garantir_pastas(*settings.PASTAS_OBRIGATORIAS)
 
-    opcoes_base = OpcoesProcessamento(
+    try:
+        opcoes_base = _montar_opcoes(args)
+    except ValueError as exc:
+        # Melhor parar aqui do que descobrir no primeiro lote fechado, com
+        # as fotos ja movidas para _lotes/<lote_id>/.
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+
+    return _vigiar(args, estado, caminho_estado, opcoes_base)
+
+
+def _montar_opcoes(args) -> OpcoesProcessamento:
+    return OpcoesProcessamento(
         modo=args.modo,
+        armadilha=args.armadilha,
         workers=args.workers,
         formato=args.formato,
         perfil=args.perfil,
@@ -302,6 +349,10 @@ def loop(args) -> int:
         pular_existentes=args.pular_existentes,
     )
 
+
+def _vigiar(args, estado: dict, caminho_estado: Path,
+            opcoes_base: OpcoesProcessamento) -> int:
+    """Loop de vigilancia propriamente dito, com as opcoes ja validadas."""
     relogio = _RelogioDeEventos()
     observador = iniciar_observador(settings.PASTA_ENTRADA, relogio)
     rastreador: dict[str, dict] = {}
@@ -318,6 +369,9 @@ def loop(args) -> int:
     logger.info("WATCHER ATIVO")
     logger.info("  Pasta vigiada ....... %s", settings.PASTA_ENTRADA)
     logger.info("  Modo ................ %s", args.modo)
+    if opcoes_base.armadilha is not None:
+        logger.info("  Armadilha do 1o lote  %s (avanca a cada lote fechado)",
+                    proxima_armadilha(estado, opcoes_base.armadilha))
     if por_quietude:
         logger.info("  Fechamento do lote .. por quietude (%ds sem arquivo novo)",
                     settings.WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG)
@@ -357,8 +411,15 @@ def loop(args) -> int:
                 else:
                     continue
 
+                # No grid, cada lote fechado e uma armadilha nova.
+                opcoes_lote = opcoes_base
+                if opcoes_base.modo == settings.MODO_GRID:
+                    opcoes_lote = opcoes_base.com(
+                        armadilha=proxima_armadilha(estado,
+                                                    opcoes_base.armadilha))
+
                 try:
-                    processar_lote(lote, estado, caminho_estado, opcoes_base)
+                    processar_lote(lote, estado, caminho_estado, opcoes_lote)
                 except Exception as exc:
                     logger.exception("Erro ao processar o lote '%s': %s",
                                      prefixo, exc)
@@ -407,8 +468,13 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
                         default=settings.MODO_PADRAO,
-                        help="grid = a1..d10 | sequencial = VARD1 | "
+                        help="grid = VARD<armadilha>A1..H10 | "
+                             "sequencial = VARD1 | "
                              "recorte = mantem o nome de origem")
+    parser.add_argument("--armadilha", type=int, default=None,
+                        help="numero da PRIMEIRA armadilha, obrigatorio no "
+                             "modo grid; cada lote fechado avanca para a "
+                             "seguinte (14 -> VARD14A1..H10, depois 15, ...)")
     parser.add_argument("--tamanho-lote", type=int,
                         default=settings.QUANTIDADE_ESPERADA,
                         help="quantas fotos formam um lote; 0 = fecha o lote "

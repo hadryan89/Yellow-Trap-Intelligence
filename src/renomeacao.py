@@ -4,9 +4,10 @@ Protocolo 1 - Nomeacao das imagens.
 As fotos chegam da camera/microscopio com nomes arbitrarios (DSC0001.JPG,
 IMG_042.jpg, ...) e recebem um nome novo antes do recorte. Ha dois esquemas:
 
-  grid       a1, a2, ..., a10, b1, ..., d10  - posicao na placa YellowTrap,
-             limitado a QUANTIDADE_ESPERADA fotos por lote;
-  sequencial VARD1, VARD2, VARD3, ...        - sem limite de quantidade.
+  grid       VARD14A1, VARD14A2, ..., VARD14H10 - numero da armadilha mais
+             a posicao no grid dela (8 colunas x 10 linhas = os dois lados
+             do papel), limitado a QUANTIDADE_ESPERADA fotos por lote;
+  sequencial VARD1, VARD2, VARD3, ...           - sem limite de quantidade.
 
 Nos dois casos a ordem vem da ORDEM NATURAL dos arquivos (img2 antes de
 img10), que por sua vez vem do operador: as fotos sao tiradas em sequencia.
@@ -48,6 +49,7 @@ __all__ = [
     "PlanoNomeacao",
     "ResultadoNomeacao",
     "mapear_grid",
+    "validar_numero_da_armadilha",
     "mapear_sequencial",
     "planejar_nomeacao",
     "aplicar_plano",
@@ -120,17 +122,57 @@ class ResultadoNomeacao:
 # ---------------------------------------------------------------------------
 
 
-def mapear_grid(arquivos, letras=None, numeros=None) -> tuple[list[ItemNomeacao], int]:
+def validar_numero_da_armadilha(armadilha) -> int:
     """
-    Nomes do grid da placa na ordem a1..a10, b1..d10.
+    Converte e confere o numero da armadilha, ou levanta ValueError.
+
+    Aceita texto ("14") porque o valor costuma chegar de um formulario, de
+    uma fila ou do n8n - mas recusa vazio, zero e negativo: nao existe
+    armadilha 0, e um nome como "VARD0A1" ou "VARD-1A1" so confundiria a
+    conferencia manual do acervo.
+    """
+    if armadilha is None or armadilha == "":
+        raise ValueError(
+            "O modo 'grid' exige o numero da armadilha: ele entra no nome de "
+            "cada quadrante (armadilha 14, quadrante G9 -> VARD14G9). "
+            "Informe --armadilha N na linha de comando ou armadilha=N nas "
+            "opcoes."
+        )
+    try:
+        numero = int(armadilha)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Numero da armadilha invalido: {armadilha!r}. Esperado um "
+            f"inteiro >= 1."
+        ) from None
+    if numero < 1:
+        raise ValueError(
+            f"Numero da armadilha invalido: {numero}. A contagem comeca em 1 "
+            f"- nao existe armadilha 0."
+        )
+    return numero
+
+
+def mapear_grid(arquivos, letras=None, numeros=None, armadilha=None,
+                prefixo=None) -> tuple[list[ItemNomeacao], int]:
+    """
+    Nomes do grid da armadilha, na ordem A1..A10, B1..B10, ... H1..H10.
 
     `arquivos`: lista de caminhos JA ordenados naturalmente.
+    `armadilha`: numero sequencial da armadilha - vai para dentro do nome
+    (armadilha 14, quadrante G9 -> VARD14G9). E OBRIGATORIO: sem ele o lote
+    sairia sem rastreio e o lote seguinte sobrescreveria este.
+
     Retorna (itens, total_de_posicoes_do_grid). Fotos que passarem do numero
     de posicoes ficam de fora - o grid tem tamanho fixo.
     """
     letras = letras if letras is not None else settings.LETRAS_COLUNAS
     numeros = numeros if numeros is not None else settings.NUMEROS_LINHAS
-    nomes_alvo = [f"{letra}{numero}" for letra in letras for numero in numeros]
+    prefixo = settings.GRID_PREFIXO if prefixo is None else prefixo
+
+    armadilha = validar_numero_da_armadilha(armadilha)
+    nomes_alvo = [f"{prefixo}{armadilha}{letra}{numero}"
+                  for letra in letras for numero in numeros]
 
     itens = []
     for i in range(min(len(arquivos), len(nomes_alvo))):
@@ -204,7 +246,8 @@ def proximo_indice_sequencial(pastas, prefixo: str | None = None,
 
 def planejar_nomeacao(arquivos, modo: str | None = None, prefixo: str | None = None,
                       digitos: int | None = None, inicio: int | None = None,
-                      letras=None, numeros=None) -> PlanoNomeacao:
+                      letras=None, numeros=None,
+                      armadilha=None) -> PlanoNomeacao:
     """
     Monta o de-para completo SEM tocar no disco.
 
@@ -216,7 +259,8 @@ def planejar_nomeacao(arquivos, modo: str | None = None, prefixo: str | None = N
     total = len(arquivos)
 
     if modo == settings.MODO_GRID:
-        itens, total_alvos = mapear_grid(arquivos, letras, numeros)
+        itens, total_alvos = mapear_grid(arquivos, letras, numeros,
+                                         armadilha=armadilha)
         ignorados = [a.name for a in arquivos[len(itens):]]
         return PlanoNomeacao(itens=itens, total_arquivos=total,
                              total_alvos=total_alvos, ignorados=ignorados)
@@ -396,14 +440,15 @@ def aplicar_plano(plano: PlanoNomeacao, pasta_destino=None,
 # ---------------------------------------------------------------------------
 
 
-def gerar_mapeamento(pasta_origem, letras, numeros):
+def gerar_mapeamento(pasta_origem, letras, numeros, armadilha=None):
     """Gera lista [(nome_original, nome_novo), ...] baseado na ordem natural."""
     extensoes = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
     arquivos = [arq.name for arq in Path(pasta_origem).iterdir()
                 if arq.suffix.lower() in extensoes]
     arquivos = sorted(arquivos, key=natural_key)
 
-    itens, total_alvos = mapear_grid(arquivos, letras, numeros)
+    itens, total_alvos = mapear_grid(arquivos, letras, numeros,
+                                     armadilha=armadilha)
     mapeamento = [(item.origem.name, item.nome_novo) for item in itens]
     return mapeamento, len(arquivos), total_alvos
 
@@ -500,6 +545,7 @@ def executar_renomeacao(
     numeros: list[int] | None = None,
     lote_id: str | None = None,
     criar_zip: bool | None = None,
+    armadilha=None,
 ) -> dict:
     """
     Renomeacao no esquema do grid, materializando por copia com MD5.
@@ -511,13 +557,17 @@ def executar_renomeacao(
     pasta_origem = Path(pasta_origem or settings.PASTA_ENTRADA)
     pasta_destino = Path(pasta_destino or settings.PASTA_RENOMEADAS)
     criar_zip = settings.RENOMEACAO_CRIAR_ZIP if criar_zip is None else criar_zip
+    # Conferido antes de varrer a pasta: nao adianta listar 80 fotos para
+    # descobrir depois que nao ha numero de armadilha para nomea-las.
+    armadilha = validar_numero_da_armadilha(armadilha)
 
     if not pasta_origem.exists():
         raise FileNotFoundError(f"Pasta de entrada nao existe: {pasta_origem}")
 
     arquivos = listar_imagens(pasta_origem)
     plano = planejar_nomeacao(arquivos, modo=settings.MODO_GRID,
-                              letras=letras, numeros=numeros)
+                              letras=letras, numeros=numeros,
+                              armadilha=armadilha)
     logger.info(
         "Renomeacao: %d arquivo(s) encontrado(s), %d nome(s) alvo, %d mapeado(s).",
         plano.total_arquivos, plano.total_alvos, len(plano),

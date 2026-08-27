@@ -33,6 +33,7 @@ def _povoar_entrada(pasta, foto_modelo, quantidade=40, prefixo="IMG"):
 def _opcoes(pastas, **kwargs) -> OpcoesProcessamento:
     """Opcoes apontando para as pastas isoladas, sempre com 1 worker."""
     kwargs.setdefault("workers", 1)
+    kwargs.setdefault("armadilha", 14)
     kwargs.setdefault("pasta_entrada", pastas["PASTA_ENTRADA"])
     kwargs.setdefault("pasta_recortadas", pastas["PASTA_RECORTADAS"])
     kwargs.setdefault("pasta_renomeadas", pastas["PASTA_RENOMEADAS"])
@@ -184,25 +185,27 @@ def test_n_fotos_entram_n_arquivos_saem(pastas_isoladas, foto_valida, modo):
 
 @pytest.mark.lento
 def test_modo_grid_ponta_a_ponta(pastas_isoladas, foto_valida):
-    """40 fotos brutas entram e saem 40 quadrantes a1..d10 recortados."""
-    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=40)
+    """80 fotos (a armadilha inteira) entram e saem VARD14A1..VARD14H10."""
+    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=80)
 
     sumario = executar_processamento(_opcoes(pastas_isoladas,
                                              modo="grid", lote_id="LOTE_TESTE"))
 
     assert sumario.sucesso is True
-    assert sumario.total_entrada == 40
-    assert sumario.renomeadas == 40
-    assert sumario.recortadas_ok == 40
+    assert sumario.total_entrada == 80
+    assert sumario.renomeadas == 80
+    assert sumario.recortadas_ok == 80
     assert sumario.recortadas_sem_deteccao == 0
     assert sumario.total_falhas == 0
 
     recortadas = pastas_isoladas["PASTA_RECORTADAS"]
-    assert (recortadas / "a1.png").exists() and (recortadas / "d10.png").exists()
-    assert len(list(recortadas.glob("*.png"))) == 40
+    assert (recortadas / "VARD14A1.png").exists()
+    assert (recortadas / "VARD14G9.png").exists()
+    assert (recortadas / "VARD14H10.png").exists()
+    assert len(list(recortadas.glob("*.png"))) == 80
 
-    # Estrategia virtual (padrao): 02_renomeadas nao e escrita - as 40 fotos
-    # de entrada geram 40 arquivos novos, e nao 80.
+    # Estrategia virtual (padrao): 02_renomeadas nao e escrita - as 80 fotos
+    # de entrada geram 80 arquivos novos, e nao 160.
     assert list(pastas_isoladas["PASTA_RENOMEADAS"].iterdir()) == []
     assert sumario.arquivos_intermediarios == 0
 
@@ -220,14 +223,14 @@ def test_modo_grid_com_lote_incompleto(pastas_isoladas, foto_valida):
     assert sumario.ignoradas == 0
     assert sumario.recortadas_ok == 3
     nomes = sorted(p.name for p in pastas_isoladas["PASTA_RECORTADAS"].glob("*.png"))
-    assert nomes == ["a1.png", "a2.png", "a3.png"]
+    assert nomes == ["VARD14A1.png", "VARD14A2.png", "VARD14A3.png"]
 
 
 @pytest.mark.lento
 def test_modo_grid_com_mais_fotos_que_posicoes(pastas_isoladas, foto_valida,
                                                monkeypatch):
     """Sobra de fotos vira falha registrada, nunca descarte silencioso."""
-    monkeypatch.setattr(settings, "LETRAS_COLUNAS", ["a"])
+    monkeypatch.setattr(settings, "LETRAS_COLUNAS", ["A"])
     monkeypatch.setattr(settings, "NUMEROS_LINHAS", [1, 2])
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=5)
 
@@ -345,7 +348,7 @@ def test_recorte_identico_em_todos_os_modos(pastas_isoladas, foto_valida,
     _povoar_entrada(entrada, foto_valida, quantidade=1, prefixo="UNICA")
 
     saidas = {}
-    for modo, nome in (("grid", "a1.png"), ("sequencial", "VARD1.png"),
+    for modo, nome in (("grid", "VARD14A1.png"), ("sequencial", "VARD1.png"),
                        ("recorte", "UNICA_001.png")):
         pasta = tmp_path / f"saida_{modo}"
         executar_processamento(_opcoes(pastas_isoladas, modo=modo,
@@ -425,7 +428,8 @@ def test_falha_no_grid_move_a_copia_e_preserva_o_original(pastas_isoladas,
 
     assert sumario.recortadas_falha == 1
     assert (entrada / "RUIM_001.png").exists(), "o original nao pode sumir"
-    assert (pastas_isoladas["PASTA_FALHAS"] / "LOTE_GRID_FALHA" / "a2.png").exists()
+    assert (pastas_isoladas["PASTA_FALHAS"] / "LOTE_GRID_FALHA"
+            / "VARD14A2.png").exists()
 
 
 def test_detalhe_das_falhas_e_limitado(pastas_isoladas, foto_valida, monkeypatch):
@@ -491,8 +495,9 @@ def test_executar_pipeline_completo_ainda_funciona(pastas_isoladas, foto_valida)
     """A assinatura antiga continua valida - agora sem a etapa de stitching."""
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=3)
 
-    sumario = executar_pipeline_completo(lote_id="LOTE_COMPAT", num_workers=1)
+    sumario = executar_pipeline_completo(lote_id="LOTE_COMPAT", num_workers=1,
+                                        armadilha=14)
 
     assert sumario.sucesso is True
     assert sumario.recortadas_ok == 3
-    assert (pastas_isoladas["PASTA_RECORTADAS"] / "a1.png").exists()
+    assert (pastas_isoladas["PASTA_RECORTADAS"] / "VARD14A1.png").exists()

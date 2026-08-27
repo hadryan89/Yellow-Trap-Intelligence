@@ -97,7 +97,7 @@ def main() -> int:
         "RECORTE_FORCA_RELATIVA": 0.55,
         "RECORTE_FORCA_MINIMA": 0.35,
         "RECORTE_CORTAR_MOLDURA": True,
-        "QUANTIDADE_ESPERADA": 40,
+        "QUANTIDADE_ESPERADA": 80,
     }
     divergentes = []
     for nome, esperado in esperados.items():
@@ -127,11 +127,14 @@ def main() -> int:
     print(f"{VERDE}Ambiente pronto.{RESET}\n")
     print("Proximos passos:")
     print(f"  1. Coloque as fotos em {settings.PASTA_ENTRADA}")
-    print(f"  2. Lote de {settings.QUANTIDADE_ESPERADA} fotos no grid da placa:")
-    print("       python scripts/run_pipeline.py --modo grid")
+    print(f"  2. Lote de {settings.QUANTIDADE_ESPERADA} fotos - a armadilha")
+    print("     inteira - no grid, informando o numero dela:")
+    print("       python scripts/run_pipeline.py --modo grid --armadilha 14")
     print("     Muitas fotos, so renomear e recortar:")
     print("       python scripts/run_pipeline.py --modo sequencial")
-    print("  3. Ou deixe o watcher ligado:  python scripts/watcher.py")
+    print("  3. Ou deixe o watcher ligado - cada lote fechado avanca de")
+    print("     armadilha:")
+    print("       python scripts/watcher.py --armadilha 14")
     return 0
 
 

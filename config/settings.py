@@ -59,11 +59,13 @@ PASTAS_OBRIGATORIAS = [
 # O mesmo motor atende tres formas de operacao. Quem chama escolhe o modo -
 # nada alem do NOME dos arquivos muda entre eles; o recorte e identico.
 #
-#   grid       -> comportamento historico: renomeia para o grid da placa
-#                 AMARELA (a1..d10, ate QUANTIDADE_ESPERADA fotos) e recorta.
-#                 A planta da placa AZUL nao esta mapeada aqui - lote azul
-#                 usa 'sequencial' ou 'recorte'. Isso e so nomeacao: o
-#                 recorte e o mesmo nos tres modos, em qualquer cor.
+#   grid       -> renomeia para o grid da armadilha AMARELA completa
+#                 (VARD<armadilha>A1 .. VARD<armadilha>H10, ate
+#                 QUANTIDADE_ESPERADA fotos) e recorta. Exige o numero da
+#                 armadilha, que entra no nome de cada quadrante. A planta da
+#                 placa AZUL nao esta mapeada aqui - lote azul usa
+#                 'sequencial' ou 'recorte'. Isso e so nomeacao: o recorte e
+#                 o mesmo nos tres modos, em qualquer cor.
 #   sequencial -> renomeia para VARD1, VARD2, VARD3, ... sem limite de
 #                 quantidade, e recorta. Modo indicado para lotes grandes
 #                 e para armadilha azul.
@@ -94,15 +96,28 @@ SEQUENCIAL_INICIO = 1
 SEQUENCIAL_CONTINUAR_NUMERACAO = False
 
 # ---------------------------------------------------------------------------
-# Grid da placa AMARELA (usado apenas pelo modo 'grid')
+# Grid da armadilha AMARELA (usado apenas pelo modo 'grid')
 #
-# 4 colunas x 10 linhas = 40 posicoes. E a planta da placa amarela, nao uma
-# propriedade do recorte. Nao existe grid equivalente para a azul: aquele
-# lote entra por 'sequencial'.
+# Uma armadilha completa sao os DOIS lados do papel: 8 colunas (A..H) x 10
+# linhas = 80 posicoes. As colunas A..D cobrem um lado e E..H o outro. E a
+# planta da armadilha, nao uma propriedade do recorte. Nao existe grid
+# equivalente para a azul: aquele lote entra por 'sequencial'.
+#
+# O nome de cada quadrante e PREFIXO + numero da armadilha + quadrante:
+#
+#     VARD14A1   armadilha 14, coluna A, linha 1  (primeira foto do lote)
+#     VARD14G9   armadilha 14, coluna G, linha 9
+#     VARD14H10  armadilha 14, ultima posicao do grid (80a foto)
+#
+# O numero da armadilha NAO tem default: ele identifica o lote no acervo e
+# so quem esta processando sabe qual e. Sem ele o pipeline recusa o lote.
+# Tambem nao leva zeros a esquerda - o quadrante sempre comeca por letra,
+# entao "VARD14G9" continua sendo decodificavel sem ambiguidade.
 # ---------------------------------------------------------------------------
-LETRAS_COLUNAS = ["a", "b", "c", "d"]
+GRID_PREFIXO = "VARD"
+LETRAS_COLUNAS = ["A", "B", "C", "D", "E", "F", "G", "H"]
 NUMEROS_LINHAS = list(range(1, 11))
-QUANTIDADE_ESPERADA = 40
+QUANTIDADE_ESPERADA = 80
 
 EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
 
@@ -387,7 +402,9 @@ SUMARIO_MAX_FALHAS_DETALHADAS = 200
 WATCHER_INTERVALO_POLL_SEG = 5
 WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG = 30
 # No modo grid, lote incompleto NUNCA e processado automaticamente: o watcher
-# espera indefinidamente pelos arquivos faltantes. No modo sequencial nao ha
+# espera indefinidamente pelos arquivos faltantes (as 80 fotos da armadilha).
+# A cada lote fechado o watcher passa para a armadilha seguinte, gravando o
+# numero atual no arquivo de estado. No modo sequencial nao ha
 # "tamanho certo" de lote - o watcher fecha o lote depois de
 # WATCHER_TIMEOUT_LOTE_INCOMPLETO_SEG segundos sem chegar arquivo novo.
 WATCHER_ARQUIVO_ESTADO = BASE_DIR / ".watcher_state.json"

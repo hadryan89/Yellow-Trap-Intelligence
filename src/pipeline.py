@@ -95,6 +95,7 @@ def etapa_nomeacao(sumario: SumarioLote, opcoes: OpcoesProcessamento,
         prefixo=opcoes.prefixo,
         digitos=opcoes.digitos,
         inicio=inicio,
+        armadilha=opcoes.armadilha,
     )
 
     sumario.total_entrada = plano.total_arquivos
@@ -117,8 +118,9 @@ def etapa_nomeacao(sumario: SumarioLote, opcoes: OpcoesProcessamento,
         logger.info("Nomeacao sequencial: %d foto(s), de %s a %s.",
                     len(plano), plano.itens[0].nome_novo, plano.itens[-1].nome_novo)
     else:
-        logger.info("Nomeacao no grid: %d foto(s) mapeada(s) em %s posicoes.",
-                    len(plano), plano.total_alvos)
+        logger.info("Nomeacao no grid da armadilha %s: %d foto(s) mapeada(s) "
+                    "em %s posicoes.",
+                    opcoes.armadilha, len(plano), plano.total_alvos)
 
     if opcoes.simular:
         return mod_renomeacao.ResultadoNomeacao(
