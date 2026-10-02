@@ -1,5 +1,6 @@
 """
-Testes de integracao: nomeacao + recorte, paralelismo, modos e falhas.
+Testes de integracao: nomeacao + recorte + montagem, paralelismo, modos e
+falhas.
 
 Nota sobre paralelismo nos testes: no Windows o ProcessPoolExecutor usa
 'spawn', e os workers reimportam config.settings do zero - por isso o
@@ -37,6 +38,7 @@ def _opcoes(pastas, **kwargs) -> OpcoesProcessamento:
     kwargs.setdefault("pasta_entrada", pastas["PASTA_ENTRADA"])
     kwargs.setdefault("pasta_recortadas", pastas["PASTA_RECORTADAS"])
     kwargs.setdefault("pasta_renomeadas", pastas["PASTA_RENOMEADAS"])
+    kwargs.setdefault("pasta_placas", pastas["PASTA_PLACAS"])
     return OpcoesProcessamento(**kwargs)
 
 
@@ -212,6 +214,14 @@ def test_modo_grid_ponta_a_ponta(pastas_isoladas, foto_valida):
     relatorio = pastas_isoladas["PASTA_RELATORIOS"] / "LOTE_TESTE" / "sumario.json"
     assert relatorio.exists()
     assert json.loads(relatorio.read_text(encoding="utf-8"))["modo"] == "grid"
+
+    # Montagem: a armadilha inteira rende duas placas, uma por lado do papel.
+    assert [p["nome"] for p in sumario.placas] == ["VARD14A1-VARD14D10",
+                                                   "VARD14E1-VARD14H10"]
+    assert all(p["placeholders"] == 0 for p in sumario.placas)
+    placas = pastas_isoladas["PASTA_PLACAS"] / "LOTE_TESTE"
+    assert (placas / "VARD14A1-VARD14D10_LOSSLESS.png").exists()
+    assert (placas / "VARD14E1-VARD14H10_LOSSLESS.png").exists()
 
 
 def test_modo_grid_com_lote_incompleto(pastas_isoladas, foto_valida):
@@ -456,6 +466,8 @@ def test_simular_nao_grava_nada(pastas_isoladas, foto_valida):
     assert sumario.sucesso is True
     assert list(pastas_isoladas["PASTA_RECORTADAS"].iterdir()) == []
     assert list(pastas_isoladas["PASTA_RENOMEADAS"].iterdir()) == []
+    assert list(pastas_isoladas["PASTA_PLACAS"].iterdir()) == []
+    assert sumario.placas == []
 
 
 def test_pipeline_sem_fotos_reporta_falha_sem_explodir(pastas_isoladas):
@@ -492,7 +504,7 @@ def test_sumario_serializa_para_json(pastas_isoladas, foto_valida, tmp_path):
 
 
 def test_executar_pipeline_completo_ainda_funciona(pastas_isoladas, foto_valida):
-    """A assinatura antiga continua valida - agora sem a etapa de stitching."""
+    """A assinatura antiga continua valida."""
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=3)
 
     sumario = executar_pipeline_completo(lote_id="LOTE_COMPAT", num_workers=1,
@@ -501,3 +513,125 @@ def test_executar_pipeline_completo_ainda_funciona(pastas_isoladas, foto_valida)
     assert sumario.sucesso is True
     assert sumario.recortadas_ok == 3
     assert (pastas_isoladas["PASTA_RECORTADAS"] / "VARD14A1.png").exists()
+
+
+# ---------------------------------------------------------------------------
+# Etapa 3 - montagem das placas
+# ---------------------------------------------------------------------------
+
+
+def _ler(caminho):
+    import cv2
+    return cv2.imread(str(caminho))
+
+
+def test_montagem_e_a_ultima_etapa_do_lote(pastas_isoladas, foto_valida):
+    """3 fotos no grid: 3 quadrantes e UMA placa de 4 x 10 com 37 placeholders."""
+    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=3)
+    sumario = executar_processamento(_opcoes(pastas_isoladas, modo="grid",
+                                             lote_id="LOTE_PLACA"))
+
+    assert sumario.sucesso is True
+    assert sumario.total_falhas == 0
+    assert len(sumario.placas) == 1
+    placa_info = sumario.placas[0]
+    assert placa_info["nome"] == "VARD14A1-VARD14A3"
+    assert placa_info["quadrantes"] == 3
+    assert placa_info["placeholders"] == 37
+
+    pasta = pastas_isoladas["PASTA_PLACAS"] / "LOTE_PLACA"
+    assert sumario.pasta_placas == str(pasta)
+    assert set(placa_info["arquivos"]) <= {p.name for p in pasta.iterdir()}
+
+    placa = _ler(pasta / "VARD14A1-VARD14A3_LOSSLESS.png")
+    altura_celula, largura_celula = placa_info["tamanho_celula"]
+    assert placa.shape[:2] == (4 * altura_celula, 10 * largura_celula)
+    # Quadrante 1 no canto de cima a esquerda; a celula 4 ja e placeholder.
+    quadrante = _ler(pastas_isoladas["PASTA_RECORTADAS"] / "VARD14A1.png")
+    assert (placa[:altura_celula, :largura_celula] == quadrante).all()
+    assert (placa[0, 3 * largura_celula] == settings.MONTAGEM_COR_PLACEHOLDER).all()
+
+    dados = json.loads((pastas_isoladas["PASTA_RELATORIOS"] / "LOTE_PLACA"
+                        / "sumario.json").read_text(encoding="utf-8"))
+    assert dados["placas"][0]["nome"] == "VARD14A1-VARD14A3"
+
+
+def test_montagem_agrupa_de_40_em_40(pastas_isoladas, foto_valida, monkeypatch):
+    """Sequencial: as placas seguem a ordem do lote, 40 quadrantes por placa."""
+    monkeypatch.setattr(settings, "MONTAGEM_QUADRANTES_POR_PLACA", 4)
+    monkeypatch.setattr(settings, "MONTAGEM_COLUNAS", 2)
+    monkeypatch.setattr(settings, "EXPORTACAO_INCLUIR_TIFF", False)
+    monkeypatch.setattr(settings, "EXPORTACAO_INCLUIR_WEBP", False)
+    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=10)
+
+    sumario = executar_processamento(_opcoes(pastas_isoladas, modo="sequencial",
+                                             lote_id="LOTE_GRUPOS"))
+
+    assert [p["nome"] for p in sumario.placas] == ["VARD1-VARD4", "VARD5-VARD8",
+                                                   "VARD9-VARD10"]
+    assert [p["placeholders"] for p in sumario.placas] == [0, 0, 2]
+
+
+def test_montagem_ignora_quadrantes_de_outros_lotes(pastas_isoladas, foto_valida):
+    """
+    A placa usa os nomes do plano, nunca 'tudo o que estiver na pasta'.
+
+    VARD14A3 sobrou de um lote anterior; este lote tem so 2 fotos.
+    """
+    recortadas = pastas_isoladas["PASTA_RECORTADAS"]
+    (recortadas / "VARD14A3.png").write_bytes(foto_valida.read_bytes())
+    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=2)
+
+    sumario = executar_processamento(_opcoes(pastas_isoladas, modo="grid",
+                                             lote_id="LOTE_ISOLADO"))
+
+    assert [p["nome"] for p in sumario.placas] == ["VARD14A1-VARD14A2"]
+    assert sumario.placas[0]["quadrantes"] == 2
+
+
+def test_quadrante_que_falhou_vira_placeholder(pastas_isoladas, foto_valida):
+    """Foto corrompida: a posicao dela na placa fica amarela, as outras seguem."""
+    entrada = pastas_isoladas["PASTA_ENTRADA"]
+    _povoar_entrada(entrada, foto_valida, quantidade=3)
+    (entrada / "IMG_002.png").write_bytes(b"nao e uma imagem")
+
+    sumario = executar_processamento(_opcoes(pastas_isoladas, modo="grid",
+                                             lote_id="LOTE_BURACO"))
+
+    assert sumario.recortadas_falha == 1
+    placa_info = sumario.placas[0]
+    assert placa_info["faltantes"] == ["VARD14A2"]
+    assert placa_info["quadrantes"] == 2
+
+    placa = _ler(pastas_isoladas["PASTA_PLACAS"] / "LOTE_BURACO"
+                 / "VARD14A1-VARD14A3_LOSSLESS.png")
+    altura_celula, largura_celula = placa_info["tamanho_celula"]
+    celula_2 = placa[:altura_celula, largura_celula:2 * largura_celula]
+    assert (celula_2 == settings.MONTAGEM_COR_PLACEHOLDER).all()
+
+
+def test_sem_montagem_termina_no_recorte(pastas_isoladas, foto_valida):
+    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=2)
+    sumario = executar_processamento(_opcoes(pastas_isoladas, montar=False,
+                                             lote_id="LOTE_SEM_PLACA"))
+
+    assert sumario.recortadas_ok == 2
+    assert sumario.placas == []
+    assert list(pastas_isoladas["PASTA_PLACAS"].iterdir()) == []
+
+
+def test_falha_na_montagem_nao_derruba_o_lote(pastas_isoladas, foto_valida,
+                                              monkeypatch):
+    """Placa que nao monta vira falha registrada; os quadrantes ficam."""
+    def explode(*args, **kwargs):
+        raise MemoryError("sem memoria para a placa")
+
+    monkeypatch.setattr("src.montagem.montar_placa_do_plano", explode)
+    _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=2)
+    sumario = executar_processamento(_opcoes(pastas_isoladas,
+                                             lote_id="LOTE_PLACA_FALHA"))
+
+    assert sumario.sucesso is True
+    assert sumario.recortadas_ok == 2
+    assert sumario.placas == []
+    assert sumario.falhas_por_etapa == {"montagem": 1}

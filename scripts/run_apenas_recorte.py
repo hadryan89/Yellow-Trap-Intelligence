@@ -1,8 +1,8 @@
 """
 Roda SOMENTE o recorte, preservando os nomes dos arquivos de entrada.
 
-Atalho para `run_pipeline.py --modo recorte` com a entrada apontando para
-data/02_renomeadas/. Util para reprocessar recortes sem refazer a nomeacao,
+Atalho para `run_pipeline.py --modo recorte --sem-montagem` com a entrada
+apontando para data/02_renomeadas/. Util para reprocessar recortes sem refazer a nomeacao,
 ou para testar o efeito de um formato de saida diferente.
 
 Uso:
@@ -81,6 +81,7 @@ def main() -> int:
         limite=args.limite,
         pular_existentes=args.pular_existentes,
         limpar_saida=args.limpar_saida,
+        montar=False,
     ))
     if not sumario.sucesso:
         return 1

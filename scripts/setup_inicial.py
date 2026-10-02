@@ -130,7 +130,7 @@ def main() -> int:
     print(f"  2. Lote de {settings.QUANTIDADE_ESPERADA} fotos - a armadilha")
     print("     inteira - no grid, informando o numero dela:")
     print("       python scripts/run_pipeline.py --modo grid --armadilha 14")
-    print("     Muitas fotos, so renomear e recortar:")
+    print("     Muitas fotos, numeradas VARD1, VARD2, ...:")
     print("       python scripts/run_pipeline.py --modo sequencial")
     print("  3. Ou deixe o watcher ligado - cada lote fechado avanca de")
     print("     armadilha:")

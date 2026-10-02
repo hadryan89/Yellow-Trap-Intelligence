@@ -10,9 +10,9 @@ Os blocos marcados com "VALIDADO NO COLAB - NAO ALTERAR" contem parametros
 calibrados atraves de dezenas de iteracoes em producao. Alterar qualquer um
 deles muda o resultado do recorte e invalida a calibracao.
 
-O pipeline termina no RECORTE. A montagem da placa (stitching) foi removida:
-a entrega final sao os quadrantes recortados, prontos para o proximo estagio
-do sistema (inferencia / armazenamento).
+O pipeline tem tres etapas: nomeacao -> recorte -> montagem. A ultima junta
+os quadrantes recortados de 40 em 40 de volta no formato da placa (4 faixas
+de 10) e exporta cada placa em multiplas resolucoes.
 """
 
 import os
@@ -35,6 +35,7 @@ PASTA_DADOS = Path(os.environ.get("YELLOWTRAP_DATA_DIR", BASE_DIR / "data"))
 PASTA_ENTRADA = PASTA_DADOS / "01_entrada_bruta"
 PASTA_RENOMEADAS = PASTA_DADOS / "02_renomeadas"
 PASTA_RECORTADAS = PASTA_DADOS / "03_recortadas"
+PASTA_PLACAS = PASTA_DADOS / "04_placas_montadas"
 PASTA_RELATORIOS = PASTA_DADOS / "_relatorios"
 PASTA_FALHAS = PASTA_DADOS / "_falhas"
 PASTA_ZIPS = PASTA_DADOS / "_zips"
@@ -47,6 +48,7 @@ PASTAS_OBRIGATORIAS = [
     PASTA_ENTRADA,
     PASTA_RENOMEADAS,
     PASTA_RECORTADAS,
+    PASTA_PLACAS,
     PASTA_RELATORIOS,
     PASTA_FALHAS,
     PASTA_ZIPS,
@@ -356,10 +358,52 @@ RECORTE_REGISTRAR_JSON_SEM_DETECCAO = True
 # reprocessar um lote interrompido custar apenas o que faltava.
 RECORTE_PULAR_EXISTENTES = False
 
-# Esvazia a pasta de recortes antes do lote. Ficou DESLIGADO por padrao: sem
-# o stitching nao ha mais risco de misturar lotes na placa, e apagar milhares
-# de arquivos a cada execucao e caro e incompativel com a retomada.
+# Esvazia a pasta de recortes antes do lote. Fica DESLIGADO por padrao: a
+# montagem le os quadrantes pelos nomes do plano do lote (e nao "tudo o que
+# estiver na pasta"), entao nao ha risco de misturar lotes na placa - e apagar
+# milhares de arquivos a cada execucao e caro e incompativel com a retomada.
 LIMPAR_PASTAS_INTERMEDIARIAS = False
+
+# ---------------------------------------------------------------------------
+# Protocolo 3 - Montagem da placa  |  VALIDADO NO COLAB - NAO ALTERAR
+# ---------------------------------------------------------------------------
+# Ultima etapa: junta os quadrantes recortados de 40 em 40, na ordem do lote,
+# no formato HORIZONTAL da placa:
+#
+#     [A1 A2 A3 ... A10]   <- faixa de cima (quadrantes 1..10)
+#     [B1 B2 B3 ... B10]
+#     [C1 C2 C3 ... C10]
+#     [D1 D2 D3 ... D10]   <- faixa de baixo (quadrantes 31..40)
+#
+# Cada faixa tem MONTAGEM_COLUNAS celulas e as faixas sao empilhadas: 40
+# quadrantes = 4 faixas de 10. No modo grid a armadilha inteira (80 fotos)
+# rende DUAS placas - A..D e E..H, um lado do papel cada. Nos outros modos
+# vale a mesma regra, na ordem do lote (VARD1..VARD40, VARD41..VARD80, ...).
+#
+# Celula sem quadrante (foto que falhou, lote incompleto) vira um placeholder
+# amarelo, para a posicao continuar onde deveria e a falta saltar aos olhos.
+MONTAGEM_ATIVA = True
+MONTAGEM_QUADRANTES_POR_PLACA = 40
+MONTAGEM_COLUNAS = 10
+MONTAGEM_ESCALA_CARREGAMENTO = 1.0  # resolucao cheia; <1.0 so para previa
+MONTAGEM_COR_PLACEHOLDER = (40, 230, 250)  # amarelo (BGR)
+
+# --- Exportacao de cada placa ---------------------------------------------
+# JPEG em multiplas larguras (nome, largura_px, qualidade). Larguras maiores
+# que a placa sao puladas - nao ha upscale.
+EXPORTACAO_RESOLUCOES = [
+    ("10k", 10000, 92),
+    ("4k", 3840, 92),
+    ("1200p", 1200, 90),
+    ("720p", 720, 88),
+]
+EXPORTACAO_INCLUIR_PNG_LOSSLESS = True
+EXPORTACAO_INCLUIR_TIFF = True
+EXPORTACAO_INCLUIR_WEBP = True
+# O formato WEBP nao aceita lado maior que 16383 px. A placa em resolucao
+# cheia passa disso com folga, e nesse caso o WEBP sai na maior largura que
+# cabe (com aviso no log) em vez de falhar.
+EXPORTACAO_WEBP_LADO_MAXIMO = 16383
 
 # ---------------------------------------------------------------------------
 # Paralelismo

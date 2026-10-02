@@ -51,6 +51,7 @@ class OpcoesProcessamento:
     pasta_entrada: Path | None = None
     pasta_renomeadas: Path | None = None
     pasta_recortadas: Path | None = None
+    pasta_placas: Path | None = None
     lote_id: str | None = None
 
     # --- nomeacao ---
@@ -73,6 +74,10 @@ class OpcoesProcessamento:
     borda: str | None = None           # linha | dentro | meia_linha
     pular_existentes: bool | None = None
     limpar_saida: bool | None = None
+
+    # --- montagem (ultima etapa) ---
+    montar: bool | None = None         # junta os quadrantes de 40 em 40
+    escala_montagem: float | None = None  # 1.0 = resolucao cheia
 
     # --- execucao ---
     workers: int | None = None
@@ -102,6 +107,7 @@ class OpcoesProcessamento:
                                          settings.PASTA_RENOMEADAS))
         self.pasta_recortadas = Path(_ou(self.pasta_recortadas,
                                          settings.PASTA_RECORTADAS))
+        self.pasta_placas = Path(_ou(self.pasta_placas, settings.PASTA_PLACAS))
 
         # Lembra se a estrategia foi escolhida a mao: em `com(modo=...)` uma
         # estrategia herdada por default precisa acompanhar o novo modo, mas
@@ -164,6 +170,13 @@ class OpcoesProcessamento:
         self.limpar_saida = bool(_ou(self.limpar_saida,
                                      settings.LIMPAR_PASTAS_INTERMEDIARIAS))
         self.notificar = bool(_ou(self.notificar, settings.WEBHOOK_ATIVO))
+
+        self.montar = bool(_ou(self.montar, settings.MONTAGEM_ATIVA))
+        self.escala_montagem = float(_ou(self.escala_montagem,
+                                         settings.MONTAGEM_ESCALA_CARREGAMENTO))
+        if not 0 < self.escala_montagem <= 1:
+            raise ValueError("escala_montagem precisa estar em (0, 1] - a "
+                             "montagem nunca amplia os quadrantes")
 
         if self.limite is not None:
             self.limite = int(self.limite)
@@ -290,6 +303,14 @@ class OpcoesProcessamento:
                           "+ quadrante)")
         else:
             linhas.append("  Arquivos por foto ........... 1 (apenas o quadrante)")
+        if self.montar:
+            linhas.append(
+                f"  Montagem .................... placas de "
+                f"{settings.MONTAGEM_QUADRANTES_POR_PLACA} em {self.pasta_placas}"
+                + ("" if self.escala_montagem == 1 else
+                   f" (escala {self.escala_montagem:g} - previa)"))
+        else:
+            linhas.append("  Montagem .................... desligada")
         if self.limite:
             linhas.append(f"  Limite ...................... {self.limite} foto(s)")
         if self.pular_existentes:

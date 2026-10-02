@@ -24,7 +24,7 @@ Como funciona
      processado, sejam 12 ou 12.000 fotos.
 
 5. Ao fechar, as fotos vao para 01_entrada_bruta/_lotes/<lote_id>/ e o
-   pipeline (nomeacao + recorte) e disparado.
+   pipeline (nomeacao + recorte + montagem das placas) e disparado.
 6. O estado vai para .watcher_state.json - reiniciar o watcher nao
    reprocessa nada.
 
@@ -281,6 +281,7 @@ def processar_lote(arquivos: list[Path], estado: dict, caminho_estado: Path,
         "processado_em": processado_em,
         "sucesso": sumario.sucesso,
         "recortadas_ok": sumario.recortadas_ok,
+        "placas": len(sumario.placas),
         "falhas": sumario.total_falhas,
         "pasta_saida": sumario.pasta_saida,
         "duracao_seg": round(sumario.duracao_seg, 2),
@@ -347,6 +348,7 @@ def _montar_opcoes(args) -> OpcoesProcessamento:
         estrategia_renomeacao=args.estrategia,
         continuar_numeracao=args.continuar,
         pular_existentes=args.pular_existentes,
+        montar=args.montar,
     )
 
 
@@ -504,6 +506,9 @@ def construir_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retomar", dest="pular_existentes", action="store_true",
                         default=None,
                         help="pula fotos cujo quadrante ja existe na saida")
+    parser.add_argument("--sem-montagem", dest="montar", action="store_false",
+                        default=None,
+                        help="termina no recorte, sem montar as placas")
     parser.add_argument("--uma-vez", action="store_true",
                         help="roda um unico ciclo e encerra (util em cron/n8n)")
     parser.add_argument("--forcar", action="store_true",

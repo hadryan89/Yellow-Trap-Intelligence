@@ -1,17 +1,22 @@
 """
 Orquestracao do pipeline YellowTrap.
 
-O pipeline tem DUAS etapas e termina no recorte:
+O pipeline tem TRES etapas:
 
     01_entrada_bruta  --nomeacao-->  (plano de nomes)
-                      --recorte-->   03_recortadas
+                      --recorte-->   03_recortadas        (1 quadrante por foto)
+                      --montagem-->  04_placas_montadas   (1 placa a cada 40)
 
-UMA foto de entrada gera UM arquivo de saida. O plano de nomes so vira
-arquivo em 02_renomeadas quando alguem pede explicitamente a estrategia
+UMA foto de entrada gera UM quadrante. O plano de nomes so vira arquivo em
+02_renomeadas quando alguem pede explicitamente a estrategia
 copiar/hardlink/mover; no caminho padrao (virtual, em todos os modos) ele e
 aplicado direto no arquivo do recorte - o quadrante ja nasce com o nome
-final, sem copia intermediaria. Jogar 30 fotos na entrada produz 30
-quadrantes, e mais nada.
+final, sem copia intermediaria.
+
+A montagem junta os quadrantes do lote de 40 em 40, na ordem do plano, no
+formato da placa (4 faixas de 10). Ela le os quadrantes pelos nomes do plano
+- nunca "tudo o que estiver em 03_recortadas" -, entao quadrantes de lotes
+anteriores na mesma pasta nao entram na placa deste lote.
 
 Modos (config/settings.py -> MODOS_VALIDOS):
 
@@ -33,9 +38,10 @@ from datetime import datetime
 from pathlib import Path
 
 from config import settings
+from src import montagem as mod_montagem
 from src import recorte as mod_recorte
 from src import renomeacao as mod_renomeacao
-from src.exportacao import extensao_do_formato
+from src.exportacao import exportar_placa, extensao_do_formato
 from src.opcoes import OpcoesProcessamento
 from src.paralelismo import descrever_item, executar_em_paralelo, resolver_num_workers
 from src.utils import (
@@ -55,6 +61,7 @@ __all__ = [
     "novo_lote_id",
     "etapa_nomeacao",
     "etapa_recorte",
+    "etapa_montagem",
     "executar_processamento",
     "executar_pipeline_completo",
     "processar_pasta",
@@ -141,7 +148,7 @@ def etapa_nomeacao(sumario: SumarioLote, opcoes: OpcoesProcessamento,
             "duplicar as fotos em disco.",
             opcoes.estrategia_renomeacao, len(plano), opcoes.pasta_renomeadas)
 
-    with Cronometro(f"ETAPA 1/2 - Nomeacao ({opcoes.estrategia_renomeacao})", logger):
+    with Cronometro(f"ETAPA 1/3 - Nomeacao ({opcoes.estrategia_renomeacao})", logger):
         resultado = mod_renomeacao.aplicar_plano(
             plano,
             pasta_destino=opcoes.pasta_renomeadas,
@@ -244,7 +251,7 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
         logger.error("Falha no recorte de %s: %s",
                      resultado.get("arquivo"), resultado.get("erro"))
 
-    with Cronometro("ETAPA 2/2 - Recorte", logger):
+    with Cronometro("ETAPA 2/3 - Recorte", logger):
         resultados = executar_em_paralelo(
             mod_recorte.processar_item,
             itens,
@@ -269,6 +276,57 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
 
 
 # ---------------------------------------------------------------------------
+# Etapa 3 - montagem
+# ---------------------------------------------------------------------------
+
+
+def planejar_montagem(itens, opcoes: OpcoesProcessamento) -> list[mod_montagem.PlanoPlaca]:
+    """
+    Placas que o lote vai render, a partir da fila do recorte.
+
+    Cada item da fila vira o caminho do quadrante que o recorte grava (ou
+    gravou, na retomada) - na mesma ordem, entao a posicao na placa e a
+    posicao no lote: no grid, A1..A10 e a faixa de cima.
+    """
+    extensao = extensao_do_formato(opcoes.formato)
+    caminhos = [opcoes.pasta_recortadas / f"{nome}{extensao}" for _, nome in itens]
+    return mod_montagem.planejar_placas(caminhos)
+
+
+def etapa_montagem(sumario: SumarioLote, itens,
+                   opcoes: OpcoesProcessamento) -> list[dict]:
+    """
+    Junta os quadrantes do lote em placas e exporta cada uma.
+
+    `itens` e a mesma fila de pares (caminho, nome_de_saida) que o recorte
+    consumiu. Uma placa que nao der para montar vira falha registrada e a
+    proxima segue - igual a uma foto ruim no recorte.
+    """
+    placas = planejar_montagem(itens, opcoes)
+    pasta = opcoes.pasta_placas / sumario.lote_id
+    logger.info("Montagem: %d placa(s) de ate %d quadrante(s) em %s.",
+                len(placas), settings.MONTAGEM_QUADRANTES_POR_PLACA, pasta)
+
+    with Cronometro("ETAPA 3/3 - Montagem", logger):
+        for plano in placas:
+            try:
+                placa, estatisticas = mod_montagem.montar_placa_do_plano(
+                    plano, escala=opcoes.escala_montagem)
+                estatisticas["arquivos"] = exportar_placa(placa, pasta, plano.nome)
+                del placa
+            except Exception as exc:
+                logger.error("Falha na montagem da placa %s: %s", plano.nome, exc)
+                sumario.adicionar_falha(plano.nome, "montagem",
+                                        f"{type(exc).__name__}: {exc}")
+                continue
+            sumario.placas.append(estatisticas)
+
+    if sumario.placas:
+        sumario.pasta_placas = str(pasta)
+    return sumario.placas
+
+
+# ---------------------------------------------------------------------------
 # Execucao completa
 # ---------------------------------------------------------------------------
 
@@ -276,7 +334,7 @@ def etapa_recorte(sumario: SumarioLote, itens, opcoes: OpcoesProcessamento | Non
 def executar_processamento(opcoes: OpcoesProcessamento | None = None,
                            **kwargs) -> SumarioLote:
     """
-    Roda nomeacao + recorte e devolve o SumarioLote.
+    Roda nomeacao + recorte + montagem e devolve o SumarioLote.
 
     E o unico ponto de entrada que o sistema chamador precisa conhecer:
 
@@ -334,6 +392,11 @@ def executar_processamento(opcoes: OpcoesProcessamento | None = None,
             for caminho, nome in nomeacao.itens[:10]:
                 logger.info("  %s -> %s%s", descrever_item(caminho), nome,
                             extensao)
+            if opcoes.montar:
+                for plano in planejar_montagem(nomeacao.itens, opcoes):
+                    logger.info("SIMULACAO: placa %s (%d quadrante(s)) -> %s",
+                                plano.nome, plano.quadrantes_esperados,
+                                opcoes.pasta_placas / lote_id)
             sumario.renomeadas = len(nomeacao.itens)
             sumario.sucesso = True
         else:
@@ -345,6 +408,8 @@ def executar_processamento(opcoes: OpcoesProcessamento | None = None,
             if sumario.recortadas_falha:
                 logger.warning("Lote concluido com %d falha(s) de %d foto(s).",
                                sumario.recortadas_falha, len(nomeacao.itens))
+            if opcoes.montar and sumario.sucesso:
+                etapa_montagem(sumario, nomeacao.itens, opcoes)
     except Exception as exc:
         logger.exception("LOTE %s ABORTADO: %s", lote_id, exc)
         sumario.adicionar_falha(None, "pipeline", f"{type(exc).__name__}: {exc}")
@@ -392,9 +457,6 @@ def executar_pipeline_completo(
 ) -> SumarioLote:
     """
     Assinatura antiga (modo grid). Mantida para nao quebrar integracoes.
-
-    A etapa de stitching nao existe mais: o lote termina nos quadrantes
-    recortados.
     """
     opcoes = OpcoesProcessamento(
         modo=settings.MODO_RECORTE if pular_renomeacao else settings.MODO_GRID,

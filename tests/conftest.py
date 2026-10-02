@@ -73,6 +73,7 @@ def pastas_isoladas(tmp_path, monkeypatch):
         "PASTA_ENTRADA": tmp_path / "01_entrada_bruta",
         "PASTA_RENOMEADAS": tmp_path / "02_renomeadas",
         "PASTA_RECORTADAS": tmp_path / "03_recortadas",
+        "PASTA_PLACAS": tmp_path / "04_placas_montadas",
         "PASTA_RELATORIOS": tmp_path / "_relatorios",
         "PASTA_FALHAS": tmp_path / "_falhas",
         "PASTA_ZIPS": tmp_path / "_zips",

@@ -1,5 +1,12 @@
 """
-Modo BATCH - nomeia e recorta um lote, uma vez.
+Modo BATCH - nomeia, recorta e monta as placas de um lote, uma vez.
+
+Tres etapas, nesta ordem:
+
+    1. nomeacao   da o nome final a cada foto (ver --modo)
+    2. recorte    um quadrante por foto em data/03_recortadas/
+    3. montagem   junta os quadrantes de 40 em 40 no formato da placa
+                  (4 faixas de 10) em data/04_placas_montadas/<lote_id>/
 
 Dois modos de nomeacao (e um terceiro que nao renomeia):
 
@@ -25,9 +32,13 @@ O recorte e o MESMO para armadilha amarela e azul - o detector olha a
 geometria da grade, nao a cor do papel. --perfil so aperta a faixa de largura
 aceita para o quadrante, como trava extra num lote dificil.
 
-O quadrante sai COM as linhas da grade nas quatro bordas, para que a etapa
-seguinte consiga remontar a placa com a grade visivel. Use --borda dentro se
-precisar do quadrante sem traco nenhum.
+O quadrante sai COM as linhas da grade nas quatro bordas, para que a
+montagem remonte a placa com a grade visivel. Use --borda dentro se precisar
+do quadrante sem traco nenhum.
+
+No modo grid a armadilha inteira (80 fotos) rende duas placas, uma por lado
+do papel: VARD14A1-VARD14D10 e VARD14E1-VARD14H10. --sem-montagem para no
+recorte; --escala-montagem 0.25 gera uma previa leve das placas.
 
 Codigo de saida:
     0  lote concluido sem nenhuma falha
@@ -54,7 +65,8 @@ from src.utils import configurar_logging  # noqa: E402
 
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="YellowTrap Pipeline - nomeacao + recorte dos quadrantes",
+        description="YellowTrap Pipeline - nomeacao + recorte + montagem "
+                    "das placas",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--modo", choices=list(settings.MODOS_VALIDOS),
@@ -116,6 +128,17 @@ def construir_parser() -> argparse.ArgumentParser:
     grupo_io.add_argument("--sem-zip", dest="zip", action="store_false",
                           help="nao cria o ZIP das fotos renomeadas")
 
+    grupo_placa = parser.add_argument_group("montagem das placas")
+    grupo_placa.add_argument("--sem-montagem", dest="montar", action="store_false",
+                             default=None,
+                             help="termina no recorte, sem montar as placas")
+    grupo_placa.add_argument("--saida-placas", type=Path, default=None,
+                             help="pasta das placas montadas (default: "
+                                  "data/04_placas_montadas)")
+    grupo_placa.add_argument("--escala-montagem", type=float, default=None,
+                             help="escala dos quadrantes na placa: 1.0 = "
+                                  "resolucao cheia | <1.0 = previa rapida")
+
     grupo_exec = parser.add_argument_group("execucao")
     grupo_exec.add_argument("--retomar", dest="pular_existentes",
                             action="store_true", default=None,
@@ -171,6 +194,9 @@ def _montar_opcoes(args) -> OpcoesProcessamento:
         pular_existentes=args.pular_existentes,
         limpar_saida=args.limpar_saida,
         simular=args.simular,
+        montar=args.montar,
+        pasta_placas=args.saida_placas,
+        escala_montagem=args.escala_montagem,
     )
 
 

@@ -21,9 +21,9 @@ REQUISITOS = [
 
 setup(
     name="yellowtrap-pipeline",
-    version="2.0.0",
+    version="2.1.0",
     description="Pipeline de processamento de imagens de armadilhas YellowTrap "
-                "(nomeacao + recorte dos quadrantes)",
+                "(nomeacao + recorte dos quadrantes + montagem das placas)",
     long_description=LEIAME,
     long_description_content_type="text/markdown",
     author="Setor de Inovacao - Grupo Progresso",

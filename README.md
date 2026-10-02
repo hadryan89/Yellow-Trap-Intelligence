@@ -7,8 +7,10 @@ afídeos, cigarrinhas, mosca branca.
 **VARD** · FATEC POMPEIA SHUNJI NISHIMURA ( POMPEIA/SP)
 
 O sistema recebe as fotos individuais dos quadrantes da placa (capturadas por
-câmera/microscópio), **renomeia** segundo o esquema escolhido e **recorta** o
-quadrante central de cada uma. A entrega final são os quadrantes limpos — a
+câmera/microscópio), **renomeia** segundo o esquema escolhido, **recorta** o
+quadrante central de cada uma e, por último, **monta a placa**: junta os
+quadrantes de 40 em 40 de volta no formato da armadilha (4 faixas de 10). A
+entrega final são os quadrantes limpos e as placas montadas — a
 identificação das pragas por *deep learning* é uma etapa posterior, fora do
 escopo deste repositório.
 
@@ -46,7 +48,7 @@ do quadrante vizinho*:
 
 O corte **para na beirada externa de cada linha**: o quadrante entregue vem com
 os quatro traços da grade desenhados na borda e **nada depois deles** — o traço
-é a própria beirada do arquivo. É com isso que a etapa seguinte encosta os 40
+é a própria beirada do arquivo. É com isso que a montagem encosta os 40
 quadrantes de volta na placa e enxerga a grade. Quem precisar do quadrante sem
 traço nenhum (o comportamento até a 2.0) roda com `--borda dentro`. Ver
 [Os traços da grade no recorte](#os-traços-da-grade-no-recorte).
@@ -60,7 +62,8 @@ os dois lados do papel) e não conhece a da azul. Lote azul vai de
 
 ## Índice
 
-- [O pipeline em 2 etapas](#o-pipeline-em-2-etapas)
+- [O pipeline em 3 etapas](#o-pipeline-em-3-etapas)
+- [A montagem da placa](#a-montagem-da-placa)
 - [Os traços da grade no recorte](#os-traços-da-grade-no-recorte)
 - [Armadilha azul](#armadilha-azul)
 - [Modos de operação](#modos-de-operação)
@@ -82,7 +85,7 @@ os dois lados do papel) e não conhece a da azul. Lote azul vai de
 
 ---
 
-## O pipeline em 2 etapas
+## O pipeline em 3 etapas
 
 ```
 data/01_entrada_bruta/     DSC0001.JPG ... DSC0080.JPG   (nomes da câmera)
@@ -98,13 +101,68 @@ data/01_entrada_bruta/     DSC0001.JPG ... DSC0080.JPG   (nomes da câmera)
 data/03_recortadas/        VARD14A1.png … VARD14H10.png
                            ou   VARD1.png, VARD2.png …
         │
+        │  Etapa 3 — montagem: junta os quadrantes de 40 em 40, na ordem
+        │            do lote, no formato da placa (4 faixas de 10) e
+        │            exporta cada placa em várias resoluções
+        ▼
+data/04_placas_montadas/<lote_id>/
+                           VARD14A1-VARD14D10_*.jpg|png|tiff|webp  (lado 1)
+                           VARD14E1-VARD14H10_*.jpg|png|tiff|webp  (lado 2)
+        │
         └─ data/_relatorios/<lote_id>/sumario.json
 
 data/02_renomeadas/        vazia por padrão (ver "materialização" abaixo)
 ```
 
-**A montagem da placa (stitching) foi removida.** O pipeline termina nos
-quadrantes recortados.
+### A montagem da placa
+
+A última etapa devolve os quadrantes ao formato da armadilha. Cada grupo de
+**40 quadrantes** vira uma placa em **layout horizontal**: os 10 primeiros são
+a faixa de cima, os 10 seguintes a segunda faixa, e assim por diante:
+
+```
+[A1 A2 A3 ... A10]   <- faixa de cima    (quadrantes  1..10)
+[B1 B2 B3 ... B10]                       (quadrantes 11..20)
+[C1 C2 C3 ... C10]                       (quadrantes 21..30)
+[D1 D2 D3 ... D10]   <- faixa de baixo   (quadrantes 31..40)
+```
+
+- **modo `grid`**: a armadilha inteira (80 fotos) rende **duas placas**, uma por
+  lado do papel — `VARD14A1-VARD14D10` (colunas A..D) e `VARD14E1-VARD14H10`
+  (colunas E..H);
+- **modos `sequencial` e `recorte`**: a mesma regra na ordem do lote —
+  `VARD1-VARD40`, `VARD41-VARD80`, …;
+- **célula sem quadrante** (foto que falhou no recorte, lote incompleto) vira um
+  **placeholder amarelo**: a posição continua onde deveria e a falta salta aos
+  olhos. A última placa de um lote que não é múltiplo de 40 sai no mesmo
+  formato, com o resto em amarelo;
+- quadrantes de **tamanhos diferentes** são normalizados para a mediana antes
+  de encostar uns nos outros;
+- a placa é montada a partir dos **nomes do plano do lote** — quadrantes que
+  sobraram de outro lote em `03_recortadas/` não entram nela.
+
+Cada placa sai em `data/04_placas_montadas/<lote_id>/`, com o nome dela como
+prefixo de cada arquivo:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `<placa>_10k.jpg`, `_4k.jpg`, `_1200p.jpg`, `_720p.jpg` | JPEG nas larguras de `EXPORTACAO_RESOLUCOES` (sem upscale) |
+| `<placa>_LOSSLESS.png` | resolução cheia, sem perda |
+| `<placa>_CIENTIFICO.tiff` | resolução cheia, TIFF LZW (abre no ImageJ/Fiji) |
+| `<placa>_WEBP.webp` | WEBP q95 — reduzido para caber no limite do formato (16.383 px por lado) |
+
+Em resolução cheia uma placa de 40 quadrantes de ~4.700 px tem ~47.000 × 19.000
+px: o PNG e o TIFF passam de 1 GB cada e a montagem leva ~3,5 min por placa
+(medido nesta máquina). Para conferir rápido, `--escala-montagem 0.25` gera uma
+prévia leve; para parar no recorte, `--sem-montagem`. Uma placa que não puder
+ser montada vira falha registrada (`[montagem]`) e **não** derruba o lote — os
+quadrantes já estão gravados.
+
+Remontar uma placa depois de trocar um quadrante à mão, sem refazer o recorte:
+
+```powershell
+python scripts/run_apenas_montagem.py --filtro "VARD14*"
+```
 
 ### Como o quadrante é encontrado
 
@@ -141,8 +199,8 @@ comando:
 | `dentro` | na beirada **interna** do traço | quadrante sem traço nenhum (comportamento até a 2.0) |
 | `meia_linha` | no **centro** do traço | metade do traço de cada lado |
 
-O padrão é `linha` porque a etapa seguinte — juntar os 80 quadrantes de volta na
-placa — precisa dos traços para remontar a grade. **Não sobra margem**: nem papel,
+O padrão é `linha` porque a montagem — juntar os quadrantes de 40 em 40 de volta
+na placa — precisa dos traços para remontar a grade. **Não sobra margem**: nem papel,
 nem faixa do quadrante vizinho, nem moldura. A primeira fileira de pixels de cada
 lado já é o traço, então quadrado encosta em quadrado na montagem.
 
@@ -463,10 +521,11 @@ Cria os comandos `yellowtrap-pipeline`, `yellowtrap-recorte` e
 | Comando | O que faz |
 |---|---|
 | `python scripts/setup_inicial.py` | cria as pastas e valida o ambiente/calibração |
-| `python scripts/run_pipeline.py --modo grid --armadilha 14` | `VARD14A1..VARD14H10` + recorte — **armadilha amarela completa** |
-| `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte, sem limite de quantidade — qualquer cor |
+| `python scripts/run_pipeline.py --modo grid --armadilha 14` | `VARD14A1..VARD14H10` + recorte + 2 placas — **armadilha amarela completa** |
+| `python scripts/run_pipeline.py --modo sequencial` | VARD1, VARD2… + recorte + 1 placa a cada 40, sem limite de quantidade — qualquer cor |
 | `python scripts/run_pipeline.py --modo sequencial --simular` | mostra o plano de nomes sem gravar nada |
 | `python scripts/run_apenas_recorte.py` | só o recorte, preservando os nomes |
+| `python scripts/run_apenas_montagem.py --filtro "VARD14*"` | só a montagem, a partir de quadrantes já recortados |
 | `python scripts/watcher.py --armadilha 14` | vigia `data/01_entrada_bruta/` e processa lotes automaticamente |
 | `python scripts/watcher.py --armadilha 14 --uma-vez` | um único ciclo do watcher e sai (cron / n8n) |
 | `python -m pytest` | suíte completa de testes |
@@ -481,7 +540,8 @@ Fluxo típico do dia a dia:
 ```powershell
 .\.venv\Scripts\Activate.ps1                   # ativa o ambiente
 # copie as fotos para data\01_entrada_bruta\
-python scripts/run_pipeline.py --modo grid --armadilha 14   # -> data\03_recortadas\
+python scripts/run_pipeline.py --modo grid --armadilha 14
+# -> quadrantes em data\03_recortadas\, placas em data\04_placas_montadas\
 ```
 
 **Código de saída** (útil no n8n / Agendador de Tarefas):
@@ -534,6 +594,12 @@ python scripts/run_pipeline.py --modo sequencial --entrada "D:\lote_azuis"
 
 # Quadrante SEM os traços da grade (comportamento até a 2.0)
 python scripts/run_pipeline.py --modo sequencial --borda dentro
+
+# Só nomear e recortar, sem montar as placas
+python scripts/run_pipeline.py --modo grid --armadilha 14 --sem-montagem
+
+# Placas em prévia leve (25% da resolução) e em outra pasta
+python scripts/run_pipeline.py --modo grid --armadilha 14 --escala-montagem 0.25 --saida-placas "D:\previas"
 ```
 
 ### Modo watcher (contínuo, vigiando a pasta)
@@ -594,6 +660,7 @@ opcoes = OpcoesProcessamento(
     workers=12,
     continuar_numeracao=True,          # não colide com o acervo já existente
     pular_existentes=True,             # retomada barata
+    montar=True,                       # etapa 3: placas de 40 (padrão)
     contexto={"job": 42, "usuario": "app"},   # carimbo livre, volta no JSON
 )
 
@@ -602,6 +669,7 @@ sumario = executar_processamento(opcoes)
 sumario.sucesso          # rodou até o fim e produziu quadrantes
 sumario.sem_falhas       # ...e nenhuma foto ficou pelo caminho
 sumario.recortadas_ok    # contadores exatos
+sumario.placas           # [{'nome': 'VARD1-VARD40', 'quadrantes': 40, ...}]
 sumario.to_dict()        # pronto para POST / banco / fila
 ```
 
@@ -617,10 +685,13 @@ plano.mapeamento   # [('DSC0001.JPG', 'VARD1.jpg'), ...]
 
 Outras entradas úteis: `src.pipeline.processar_pasta(pasta, modo=...)`,
 `src.pipeline.etapa_recorte(sumario, itens, opcoes)`,
-`src.recorte.processar_foto(caminho, nome_saida=...)`.
+`src.pipeline.etapa_montagem(sumario, itens, opcoes)`,
+`src.recorte.processar_foto(caminho, nome_saida=...)`,
+`src.montagem.planejar_placas(caminhos)` +
+`src.montagem.montar_placa_do_plano(plano)` +
+`src.exportacao.exportar_placa(placa, pasta, nome)`.
 
-`executar_pipeline_completo(...)`, a assinatura antiga, continua funcionando
-(sem a etapa de stitching).
+`executar_pipeline_completo(...)`, a assinatura antiga, continua funcionando.
 
 ---
 
@@ -678,14 +749,16 @@ yellowtrap_pipeline/
 │   ├── opcoes.py                OpcoesProcessamento (contrato de entrada)
 │   ├── renomeacao.py            Etapa 1 (plano de nomes + materialização)
 │   ├── recorte.py               Etapa 2 (detecção de grade + crop, 4 lados)
-│   ├── exportacao.py            gravação dos quadrantes
+│   ├── montagem.py              Etapa 3 (placas de 40 quadrantes)
+│   ├── exportacao.py            gravação dos quadrantes e das placas
 │   ├── paralelismo.py           wrapper de ProcessPoolExecutor
-│   ├── pipeline.py              orquestração das 2 etapas
+│   ├── pipeline.py              orquestração das 3 etapas
 │   └── utils.py                 logging, memória, falhas, sumário
 ├── data/
 │   ├── 01_entrada_bruta/        fotos originais (+ _lotes/ com o histórico)
 │   ├── 02_renomeadas/           vazia por padrão (só com `--materializar`)
-│   ├── 03_recortadas/           quadrantes limpos  ← entrega final
+│   ├── 03_recortadas/           quadrantes limpos  ← entrega
+│   ├── 04_placas_montadas/      <lote_id>/ placas de 40  ← entrega
 │   ├── azuis/BlueTrap/          acervo de referência da armadilha azul
 │   │                            (65 fotos; usado só pelos testes de acervo)
 │   ├── _relatorios/             <lote_id>/sumario.json
@@ -696,6 +769,7 @@ yellowtrap_pipeline/
 │   ├── setup_inicial.py
 │   ├── run_pipeline.py          entrada principal (--modo)
 │   ├── run_apenas_recorte.py
+│   ├── run_apenas_montagem.py
 │   └── watcher.py
 └── tests/
     ├── fixtures/gerar_fixtures.py    gera as imagens sintéticas (amarela e azul)
@@ -703,6 +777,7 @@ yellowtrap_pipeline/
     ├── test_renomeacao.py            plano de nomes (grid e sequencial)
     ├── test_recorte.py               detecção da grade e crop
     ├── test_recorte_acervo.py        regressão contra as fotos reais em data/
+    ├── test_montagem.py              layout da placa, placeholders, exportação
     ├── test_pipeline.py              integração + paralelismo + modos
     ├── test_watcher.py               numeração das armadilhas entre lotes
     └── test_cli.py                   erro de parâmetro sai como frase
@@ -783,6 +858,13 @@ Ele é pulado automaticamente quando o acervo não está no disco.
 | `RECORTE_CORTAR_MOLDURA` | `True` | apara as pontas que não são papel da armadilha (fundo do microscópio, sombra) |
 | `RECORTE_PULAR_EXISTENTES` | `False` | retomada automática |
 | `LIMPAR_PASTAS_INTERMEDIARIAS` | `False` | esvazia `03_recortadas` antes do lote |
+| `MONTAGEM_ATIVA` | `True` | roda a etapa 3; `--sem-montagem` desliga por execução |
+| `MONTAGEM_QUADRANTES_POR_PLACA` | `40` | quadrantes por placa |
+| `MONTAGEM_COLUNAS` | `10` | quadrantes por faixa (40 / 10 = 4 faixas) |
+| `MONTAGEM_ESCALA_CARREGAMENTO` | `1.0` | escala dos quadrantes na placa; `< 1.0` só para prévia |
+| `MONTAGEM_COR_PLACEHOLDER` | `(40, 230, 250)` | cor (BGR) da célula sem quadrante — amarelo |
+| `EXPORTACAO_RESOLUCOES` | `10k, 4k, 1200p, 720p` | larguras dos JPEGs de cada placa |
+| `EXPORTACAO_INCLUIR_PNG_LOSSLESS` / `_TIFF` / `_WEBP` | `True` | formatos extras de cada placa |
 | `NUM_WORKERS` | `None` | processos paralelos; `None` = CPUs − 1 |
 | `PARALELISMO_JANELA_POR_WORKER` | `4` | tarefas em voo por worker |
 | `PARALELISMO_LIMIAR_STREAMING` | `500` | a partir daqui a agregação é incremental |
@@ -835,6 +917,8 @@ SUMARIO DO LOTE 20260815_110928  (modo: grid)
   Recortadas SEM deteccao ....... 1       ← exige conferência visual
   Falhas ........................ 0
   Pasta de saida ................ ...\data\03_recortadas
+  Placas montadas ............... 2
+  Pasta das placas .............. ...\data\04_placas_montadas\20260815_110928
   Memoria (fim do lote) ......... 45 MB
   Tempo total ................... 44.61s
   Throughput .................... 0.90 foto/s
@@ -874,6 +958,7 @@ Toda falha gera um `.json` em `data/_falhas/<lote_id>/`:
 | **Imagem ilegível/corrompida** | quadrante não é gerado; entra em `Falhas` | só se estiver numa pasta intermediária (ver abaixo) |
 | **MD5 divergente na renomeação** | cópia rejeitada | sim, vai para `_falhas/` |
 | **Detecção da grade falhou** | quadrante é salvo com a **imagem cheia, sem recorte** + `WARNING` | **não** — só o JSON de diagnóstico |
+| **Placa que não pôde ser montada** (sem memória, disco cheio) | entra em `Falhas` como `[montagem]`; os quadrantes já gravados ficam, e as outras placas seguem | não |
 | **Foto além das 80 posições (modo grid)** | não é processada; entra em `Ignoradas` + `ERROR`. Causa comum: duas armadilhas no mesmo envio, ou lote de placa azul no modo `grid` | não |
 
 > **O arquivo original do usuário nunca é movido.** Quando o recorte lê direto
@@ -965,6 +1050,11 @@ primeira execução — nada de binário no repositório.
 - **robustez**: foto corrompida não derruba o lote, arquivo sumido no meio da
   cópia não derruba a etapa, ordem dos resultados preservada no paralelismo,
   janela de submissão não perde item, retomada não reprocessa.
+- **a montagem da placa** (`test_montagem.py`): 4 faixas de 10 com `A1..A10`
+  em cima, a armadilha inteira vira 2 placas (`A..D` e `E..H`), quadrante que
+  falhou vira placeholder amarelo na posição certa, quadrante de outro lote não
+  entra, o preenchimento pré-alocado é pixel a pixel igual ao `hstack` +
+  `vstack` do Colab, e uma placa que falha não derruba o lote.
 
 ### Diferença em relação à versão anterior
 
@@ -1106,6 +1196,33 @@ rastreável pelo `sumario.json`.
 ---
 
 ## Mudanças recentes
+
+### A montagem da placa voltou, como última etapa
+
+**Antes:** o pipeline terminava no recorte. A montagem (stitching) tinha sido
+removida junto com a mudança para os modos em escala, e juntar os quadrantes de
+volta na placa era trabalho manual.
+
+**Agora:** o pipeline tem três etapas — nomeação → recorte → **montagem**. A
+montagem junta os quadrantes de 40 em 40 no formato que já era o da placa (4
+faixas de 10, `A1..A10` em cima) e exporta cada placa em
+`data/04_placas_montadas/<lote_id>/` — ver [A montagem da
+placa](#a-montagem-da-placa).
+
+| | Montagem antiga | Esta versão |
+|---|---|---|
+| Quantas placas | 1 por lote (`a1..d10`) | 1 a cada 40 quadrantes — a armadilha inteira (80) rende 2, uma por lado |
+| Modos | só o grid | os três (`grid`, `sequencial`, `recorte`) |
+| Quais quadrantes entram | tudo o que estivesse em `03_recortadas/` | só os do plano do lote |
+| Nome dos arquivos | `placa_4k.jpg` (a pasta era esvaziada a cada lote) | `VARD14A1-VARD14D10_4k.jpg` — as placas convivem |
+| WEBP de placa grande | falhava em silêncio (limite de 16.383 px) | sai reduzido, com aviso no log |
+| Memória | `hstack` + `vstack` | placa pré-alocada — mesmo resultado pixel a pixel (travado por teste), sem a cópia intermediária das faixas |
+| Falha numa placa | abortava | vira falha `[montagem]`; o lote e as outras placas seguem |
+
+**O que muda para quem já usava:** a etapa liga sozinha (`MONTAGEM_ATIVA =
+True`) e grava ~2 GB por placa em resolução cheia (PNG + TIFF). Quem só quer os
+quadrantes roda com `--sem-montagem`; `run_apenas_recorte.py` continua parando
+no recorte.
 
 ### O grid virou a armadilha inteira, e o nome carrega o número dela
 

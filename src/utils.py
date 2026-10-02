@@ -532,6 +532,10 @@ class SumarioLote:
     falhas_total: int = 0
     falhas_por_etapa: dict[str, int] = field(default_factory=dict)
     pasta_saida: str | None = None
+    # Etapa 3: uma entrada por placa montada (nome, quadrantes, faltantes,
+    # arquivos exportados). A lista e curta - 1 placa a cada 40 fotos.
+    placas: list[dict[str, Any]] = field(default_factory=list)
+    pasta_placas: str | None = None
     memoria_pico_mb: float | None = None
     sucesso: bool = False
     # Snapshot das opcoes da execucao (inclui o `contexto` livre do chamador).
@@ -617,6 +621,12 @@ class SumarioLote:
         ]
         if self.pasta_saida:
             linhas.append(f"  Pasta de saida ................ {self.pasta_saida}")
+        if self.placas:
+            com_falta = sum(1 for p in self.placas if p.get("placeholders"))
+            linhas.append(f"  Placas montadas ............... {len(self.placas)}"
+                          + (f"  ({com_falta} com placeholder)" if com_falta else ""))
+        if self.pasta_placas:
+            linhas.append(f"  Pasta das placas .............. {self.pasta_placas}")
         if self.memoria_pico_mb is not None:
             linhas.append(f"  Memoria (fim do lote) ......... {self.memoria_pico_mb:.0f} MB")
         linhas.append(f"  Tempo total ................... {formatar_duracao(self.duracao_seg)}")
