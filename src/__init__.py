@@ -10,8 +10,8 @@ Modulos:
     renomeacao  - Etapa 1: plano de nomes (grid VARD14A1 ou VARD1) e sua
                   materializacao (virtual / hardlink / copiar+MD5 / mover)
     recorte     - Etapa 2: recorta o quadrante central (deteccao de grade)
-    montagem    - Etapa 3: junta os quadrantes de 40 em 40 no formato da placa
-    exportacao  - gravacao dos quadrantes e das placas (multiplas resolucoes)
+    montagem    - Etapa 3: junta os quadrantes de 80 em 80 (frente + verso)
+    exportacao  - gravacao dos quadrantes e das placas (PNG 1920 x 1080)
     paralelismo - wrapper de ProcessPoolExecutor com submissao em janela
     pipeline    - orquestracao das tres etapas
     utils       - logging, medicao de recursos, registro de falhas, sumario

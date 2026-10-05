@@ -4,11 +4,11 @@ Gravacao em disco: quadrantes recortados e placas montadas.
 Reune os dois pontos do pipeline em que pixels vao para o disco:
 
   * salvar_recortada() - quadrante individual (protocolo 2)
-  * exportar_placa()   - placa montada, em multiplas resolucoes (protocolo 3)
+  * exportar_placa()   - placa montada, frente e verso num unico PNG de
+                         1920 x 1080 (protocolo 3)
 
-Ambas vem do Colab. Os parametros de compressao (PNG=1, TIFF=5/LZW, WEBP=95)
-sao lossless ou de altissima qualidade e estao espelhados em
-config/settings.py apenas para consulta.
+salvar_recortada() vem do Colab: PNG=1 e TIFF=5/LZW sao lossless e JPEG sai
+com qualidade 100.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from config import settings
 from src.utils import imwrite_fallback, obter_logger
@@ -25,6 +26,7 @@ logger = obter_logger(__name__)
 __all__ = [
     "salvar_recortada",
     "exportar_placa",
+    "compor_quadro",
     "extensao_do_formato",
     "FORMATOS_VALIDOS",
 ]
@@ -76,93 +78,70 @@ def _gravar(caminho: Path, imagem, params: list) -> None:
             raise IOError(f"cv2.imwrite falhou ao gravar {caminho}")
 
 
-def _redimensionar_para_largura(placa, largura: int):
+def compor_quadro(placa, largura: int | None = None, altura: int | None = None,
+                  rotulos=None):
+    """
+    Encaixa a placa num quadro de exatamente `largura` x `altura` px.
+
+    A placa e reduzida sem distorcer e centralizada; a sobra vira fundo. Os
+    `rotulos` (um por lado do papel, de cima para baixo) vao na margem
+    esquerda, na altura do lado correspondente - se a margem for estreita
+    demais para o texto, o rotulo e omitido.
+    """
+    largura = largura or settings.EXPORTACAO_LARGURA
+    altura = altura or settings.EXPORTACAO_ALTURA
+    rotulos = settings.MONTAGEM_ROTULOS_LADOS if rotulos is None else rotulos
+
     altura_placa, largura_placa = placa.shape[:2]
-    altura = max(1, int(largura * altura_placa / largura_placa))
-    return cv2.resize(placa, (largura, altura), interpolation=cv2.INTER_AREA)
+    fator = min(largura / largura_placa, altura / altura_placa)
+    nova_largura = max(1, round(largura_placa * fator))
+    nova_altura = max(1, round(altura_placa * fator))
+    interpolacao = cv2.INTER_AREA if fator < 1 else cv2.INTER_LINEAR
+    reduzida = cv2.resize(placa, (nova_largura, nova_altura),
+                          interpolation=interpolacao)
+
+    quadro = np.empty((altura, largura, 3), dtype=np.uint8)
+    quadro[:] = settings.EXPORTACAO_COR_FUNDO
+    x0 = (largura - nova_largura) // 2
+    y0 = (altura - nova_altura) // 2
+    quadro[y0:y0 + nova_altura, x0:x0 + nova_largura] = reduzida
+
+    if rotulos:
+        _escrever_rotulos(quadro, rotulos, margem=x0, y0=y0, altura_placa=nova_altura)
+    return quadro
 
 
-def exportar_placa(placa, pasta_export: Path | str, nome: str,
-                   resolucoes=None,
-                   incluir_png_lossless: bool | None = None,
-                   incluir_tiff: bool | None = None,
-                   incluir_webp: bool | None = None) -> list[str]:
+def _escrever_rotulos(quadro, rotulos, margem: int, y0: int, altura_placa: int) -> None:
+    fonte = cv2.FONT_HERSHEY_SIMPLEX
+    folga = max(4, margem // 10)
+    espessura = 2
+    maior, _ = cv2.getTextSize(max(rotulos, key=len), fonte, 1.0, espessura)
+    escala = min(1.2, (margem - 2 * folga) / maior[0]) if maior[0] else 0
+    if escala < 0.4:
+        logger.debug("Margem de %d px estreita demais para os rotulos dos lados.",
+                     margem)
+        return
+    altura_lado = altura_placa / len(rotulos)
+    for i, rotulo in enumerate(rotulos):
+        (w, h), _ = cv2.getTextSize(rotulo, fonte, escala, espessura)
+        x = (margem - w) // 2
+        y = round(y0 + (i + 0.5) * altura_lado + h / 2)
+        cv2.putText(quadro, rotulo, (x, y), fonte, escala,
+                    settings.EXPORTACAO_COR_ROTULO, espessura, cv2.LINE_AA)
+
+
+def exportar_placa(placa, pasta_export: Path | str, nome: str) -> list[str]:
     """
-    Exporta UMA placa em multiplas resolucoes + formatos lossless.
+    Exporta UMA placa como <nome>.png, em EXPORTACAO_LARGURA x EXPORTACAO_ALTURA.
 
-    Os arquivos levam o nome da placa como prefixo, entao as varias placas de
-    um lote convivem na mesma pasta:
-
-        <nome>_10k.jpg  <nome>_4k.jpg  <nome>_1200p.jpg  <nome>_720p.jpg
-        <nome>_LOSSLESS.png  <nome>_CIENTIFICO.tiff  <nome>_WEBP.webp
-
-    `resolucoes`: lista de tuplas (sufixo, largura_px, qualidade_jpg). Os
-    demais parametros tem default em settings.py. Devolve os nomes gravados.
+    O nome da placa e o nome do arquivo, entao as varias placas de um lote
+    convivem na mesma pasta. Devolve os nomes gravados.
     """
-    resolucoes = (settings.EXPORTACAO_RESOLUCOES if resolucoes is None
-                  else resolucoes)
-    if incluir_png_lossless is None:
-        incluir_png_lossless = settings.EXPORTACAO_INCLUIR_PNG_LOSSLESS
-    if incluir_tiff is None:
-        incluir_tiff = settings.EXPORTACAO_INCLUIR_TIFF
-    if incluir_webp is None:
-        incluir_webp = settings.EXPORTACAO_INCLUIR_WEBP
-
     pasta_export = Path(pasta_export)
     pasta_export.mkdir(parents=True, exist_ok=True)
-    altura_placa, largura_placa = placa.shape[:2]
-    arquivos_gerados = []
-
-    # JPEG em multiplas resolucoes
-    for sufixo, largura_alvo, qualidade in resolucoes:
-        if largura_alvo > largura_placa:
-            logger.debug(
-                "Resolucao '%s' (%d px) ignorada: maior que a placa (%d px). "
-                "Nao ha upscale.", sufixo, largura_alvo, largura_placa,
-            )
-            continue  # nao faz upscale
-        placa_redim = _redimensionar_para_largura(placa, largura_alvo)
-        nome_arquivo = f"{nome}_{sufixo}.jpg"
-        _gravar(pasta_export / nome_arquivo, placa_redim,
-                [cv2.IMWRITE_JPEG_QUALITY, qualidade, cv2.IMWRITE_JPEG_OPTIMIZE, 1])
-        del placa_redim
-        arquivos_gerados.append(nome_arquivo)
-        logger.info("Exportado %s", nome_arquivo)
-
-    # PNG lossless (resolucao original)
-    if incluir_png_lossless:
-        nome_arquivo = f"{nome}_LOSSLESS.png"
-        _gravar(pasta_export / nome_arquivo, placa, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-        arquivos_gerados.append(nome_arquivo)
-        logger.info("Exportado %s (%d x %d px)", nome_arquivo,
-                    largura_placa, altura_placa)
-
-    # TIFF (padrao cientifico, abre no ImageJ/Fiji)
-    if incluir_tiff:
-        nome_arquivo = f"{nome}_CIENTIFICO.tiff"
-        _gravar(pasta_export / nome_arquivo, placa, [cv2.IMWRITE_TIFF_COMPRESSION, 5])
-        arquivos_gerados.append(nome_arquivo)
-        logger.info("Exportado %s (TIFF LZW)", nome_arquivo)
-
-    # WEBP (compressao moderna) - limitado pelo formato a 16383 px por lado.
-    if incluir_webp:
-        nome_arquivo = f"{nome}_WEBP.webp"
-        lado_max = settings.EXPORTACAO_WEBP_LADO_MAXIMO
-        imagem_webp = placa
-        if max(altura_placa, largura_placa) > lado_max:
-            largura_webp = min(lado_max,
-                               int(lado_max * largura_placa / altura_placa))
-            imagem_webp = _redimensionar_para_largura(placa, largura_webp)
-            logger.warning(
-                "%s: a placa (%d x %d px) passa do limite do WEBP (%d px por "
-                "lado) - exportado reduzido para %d x %d px.", nome_arquivo,
-                largura_placa, altura_placa, lado_max,
-                imagem_webp.shape[1], imagem_webp.shape[0],
-            )
-        _gravar(pasta_export / nome_arquivo, imagem_webp,
-                [cv2.IMWRITE_WEBP_QUALITY, 95])
-        del imagem_webp
-        arquivos_gerados.append(nome_arquivo)
-        logger.info("Exportado %s", nome_arquivo)
-
-    return arquivos_gerados
+    quadro = compor_quadro(placa)
+    nome_arquivo = f"{nome}.png"
+    _gravar(pasta_export / nome_arquivo, quadro, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    logger.info("Exportado %s (%d x %d px)", nome_arquivo,
+                quadro.shape[1], quadro.shape[0])
+    return [nome_arquivo]

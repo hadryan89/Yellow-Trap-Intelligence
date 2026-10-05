@@ -5,7 +5,7 @@ O pipeline tem TRES etapas:
 
     01_entrada_bruta  --nomeacao-->  (plano de nomes)
                       --recorte-->   03_recortadas        (1 quadrante por foto)
-                      --montagem-->  04_placas_montadas   (1 placa a cada 40)
+                      --montagem-->  04_placas_montadas   (1 placa a cada 80)
 
 UMA foto de entrada gera UM quadrante. O plano de nomes so vira arquivo em
 02_renomeadas quando alguem pede explicitamente a estrategia
@@ -13,8 +13,9 @@ copiar/hardlink/mover; no caminho padrao (virtual, em todos os modos) ele e
 aplicado direto no arquivo do recorte - o quadrante ja nasce com o nome
 final, sem copia intermediaria.
 
-A montagem junta os quadrantes do lote de 40 em 40, na ordem do plano, no
-formato da placa (4 faixas de 10). Ela le os quadrantes pelos nomes do plano
+A montagem junta os quadrantes do lote de 80 em 80, na ordem do plano, numa
+imagem 1920 x 1080 com os dois lados da placa (frente e verso, 4 faixas de
+10 cada). Ela le os quadrantes pelos nomes do plano
 - nunca "tudo o que estiver em 03_recortadas" -, entao quadrantes de lotes
 anteriores na mesma pasta nao entram na placa deste lote.
 
@@ -286,7 +287,8 @@ def planejar_montagem(itens, opcoes: OpcoesProcessamento) -> list[mod_montagem.P
 
     Cada item da fila vira o caminho do quadrante que o recorte grava (ou
     gravou, na retomada) - na mesma ordem, entao a posicao na placa e a
-    posicao no lote: no grid, A1..A10 e a faixa de cima.
+    posicao no lote: no grid, A1..A10 e a faixa de cima da frente e
+    E1..E10 a do verso.
     """
     extensao = extensao_do_formato(opcoes.formato)
     caminhos = [opcoes.pasta_recortadas / f"{nome}{extensao}" for _, nome in itens]
@@ -310,8 +312,7 @@ def etapa_montagem(sumario: SumarioLote, itens,
     with Cronometro("ETAPA 3/3 - Montagem", logger):
         for plano in placas:
             try:
-                placa, estatisticas = mod_montagem.montar_placa_do_plano(
-                    plano, escala=opcoes.escala_montagem)
+                placa, estatisticas = mod_montagem.montar_placa_do_plano(plano)
                 estatisticas["arquivos"] = exportar_placa(placa, pasta, plano.nome)
                 del placa
             except Exception as exc:

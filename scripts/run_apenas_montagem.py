@@ -2,15 +2,14 @@
 Roda SOMENTE a montagem das placas (protocolo 3) sobre quadrantes ja recortados.
 
 Util para remontar uma placa depois de substituir a mao um quadrante ruim,
-ou para gerar uma previa leve sem refazer o recorte. Os quadrantes da pasta
-de entrada sao tomados em ordem natural (VARD14A1, VARD14A2, ..., VARD14A10,
-VARD14B1, ...) e juntados de 40 em 40 no formato da placa (4 faixas de 10).
+sem refazer o recorte. Os quadrantes da pasta de entrada sao tomados em
+ordem natural (VARD14A1, VARD14A2, ..., VARD14A10, VARD14B1, ...) e juntados
+de 80 em 80 numa imagem 1920 x 1080 com frente (A..D) e verso (E..H).
 
 Use --filtro para escolher UMA armadilha numa pasta que tem varias:
 
     python scripts/run_apenas_montagem.py --filtro "VARD14*"
     python scripts/run_apenas_montagem.py --entrada data/03_recortadas
-    python scripts/run_apenas_montagem.py --filtro "VARD14*" --escala 0.25   # previa
 
 Codigo de saida:
     0  todas as placas montadas
@@ -56,9 +55,6 @@ def construir_parser() -> argparse.ArgumentParser:
                         help="pasta de destino (default: "
                              "data/04_placas_montadas/<lote_id>)")
     parser.add_argument("--lote-id", default=None, help="identificador do lote")
-    parser.add_argument("--escala", type=float, default=None,
-                        help="escala de carregamento dos quadrantes "
-                             "(1.0 = resolucao cheia; <1.0 gera previa rapida)")
     parser.add_argument("--verbose", action="store_true", help="log DEBUG no console")
     return parser
 
@@ -70,14 +66,6 @@ def main() -> int:
 
     lote_id = args.lote_id or novo_lote_id()
     pasta_saida = args.saida or (settings.PASTA_PLACAS / lote_id)
-    if args.escala is not None and not 0 < args.escala <= 1:
-        print("ERRO: --escala precisa estar em (0, 1]", file=sys.stderr)
-        return 1
-    if args.escala is not None and args.escala < 1.0:
-        logger.warning(
-            "Escala %.2f: a placa NAO sai em resolucao cheia. Use apenas para "
-            "previa - nao para o arquivo cientifico.", args.escala,
-        )
 
     if not args.entrada.is_dir():
         logger.error("Pasta de quadrantes nao existe: %s", args.entrada)
@@ -93,8 +81,7 @@ def main() -> int:
     sumario.total_entrada = len(quadrantes)
     for plano in mod_montagem.planejar_placas(quadrantes):
         try:
-            placa, estatisticas = mod_montagem.montar_placa_do_plano(
-                plano, escala=args.escala)
+            placa, estatisticas = mod_montagem.montar_placa_do_plano(plano)
             estatisticas["arquivos"] = exportar_placa(placa, pasta_saida, plano.nome)
             del placa
             sumario.placas.append(estatisticas)

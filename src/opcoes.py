@@ -76,8 +76,7 @@ class OpcoesProcessamento:
     limpar_saida: bool | None = None
 
     # --- montagem (ultima etapa) ---
-    montar: bool | None = None         # junta os quadrantes de 40 em 40
-    escala_montagem: float | None = None  # 1.0 = resolucao cheia
+    montar: bool | None = None         # junta os quadrantes de 80 em 80
 
     # --- execucao ---
     workers: int | None = None
@@ -172,11 +171,6 @@ class OpcoesProcessamento:
         self.notificar = bool(_ou(self.notificar, settings.WEBHOOK_ATIVO))
 
         self.montar = bool(_ou(self.montar, settings.MONTAGEM_ATIVA))
-        self.escala_montagem = float(_ou(self.escala_montagem,
-                                         settings.MONTAGEM_ESCALA_CARREGAMENTO))
-        if not 0 < self.escala_montagem <= 1:
-            raise ValueError("escala_montagem precisa estar em (0, 1] - a "
-                             "montagem nunca amplia os quadrantes")
 
         if self.limite is not None:
             self.limite = int(self.limite)
@@ -306,9 +300,9 @@ class OpcoesProcessamento:
         if self.montar:
             linhas.append(
                 f"  Montagem .................... placas de "
-                f"{settings.MONTAGEM_QUADRANTES_POR_PLACA} em {self.pasta_placas}"
-                + ("" if self.escala_montagem == 1 else
-                   f" (escala {self.escala_montagem:g} - previa)"))
+                f"{settings.MONTAGEM_QUADRANTES_POR_PLACA} (frente + verso), "
+                f"{settings.EXPORTACAO_LARGURA} x {settings.EXPORTACAO_ALTURA} "
+                f"em {self.pasta_placas}")
         else:
             linhas.append("  Montagem .................... desligada")
         if self.limite:

@@ -11,8 +11,8 @@ calibrados atraves de dezenas de iteracoes em producao. Alterar qualquer um
 deles muda o resultado do recorte e invalida a calibracao.
 
 O pipeline tem tres etapas: nomeacao -> recorte -> montagem. A ultima junta
-os quadrantes recortados de 40 em 40 de volta no formato da placa (4 faixas
-de 10) e exporta cada placa em multiplas resolucoes.
+os quadrantes recortados de 80 em 80 numa imagem com os dois lados da placa
+(frente e verso, 4 faixas de 10 cada) e a exporta em 1920 x 1080.
 """
 
 import os
@@ -365,45 +365,51 @@ RECORTE_PULAR_EXISTENTES = False
 LIMPAR_PASTAS_INTERMEDIARIAS = False
 
 # ---------------------------------------------------------------------------
-# Protocolo 3 - Montagem da placa  |  VALIDADO NO COLAB - NAO ALTERAR
+# Protocolo 3 - Montagem da placa
 # ---------------------------------------------------------------------------
-# Ultima etapa: junta os quadrantes recortados de 40 em 40, na ordem do lote,
-# no formato HORIZONTAL da placa:
+# Ultima etapa: junta os quadrantes recortados de 80 em 80, na ordem do lote,
+# numa UNICA imagem com os DOIS lados do papel - frente em cima, verso
+# embaixo, cada lado no formato HORIZONTAL da placa:
 #
-#     [A1 A2 A3 ... A10]   <- faixa de cima (quadrantes 1..10)
+#     [A1 A2 A3 ... A10]   <- FRENTE, faixa de cima (quadrantes 1..10)
 #     [B1 B2 B3 ... B10]
 #     [C1 C2 C3 ... C10]
-#     [D1 D2 D3 ... D10]   <- faixa de baixo (quadrantes 31..40)
+#     [D1 D2 D3 ... D10]   <- FRENTE, faixa de baixo (quadrantes 31..40)
+#     ==================   <- separador entre os lados
+#     [E1 E2 E3 ... E10]   <- VERSO, faixa de cima (quadrantes 41..50)
+#     ...
+#     [H1 H2 H3 ... H10]   <- VERSO, faixa de baixo (quadrantes 71..80)
 #
-# Cada faixa tem MONTAGEM_COLUNAS celulas e as faixas sao empilhadas: 40
-# quadrantes = 4 faixas de 10. No modo grid a armadilha inteira (80 fotos)
-# rende DUAS placas - A..D e E..H, um lado do papel cada. Nos outros modos
-# vale a mesma regra, na ordem do lote (VARD1..VARD40, VARD41..VARD80, ...).
+# Cada faixa tem MONTAGEM_COLUNAS celulas; MONTAGEM_FAIXAS_POR_LADO faixas
+# formam um lado. No modo grid a armadilha inteira (80 fotos) rende UMA
+# imagem; nos outros modos vale a mesma regra, na ordem do lote
+# (VARD1..VARD80, VARD81..VARD160, ...).
 #
 # Celula sem quadrante (foto que falhou, lote incompleto) vira um placeholder
 # amarelo, para a posicao continuar onde deveria e a falta saltar aos olhos.
 MONTAGEM_ATIVA = True
-MONTAGEM_QUADRANTES_POR_PLACA = 40
+MONTAGEM_QUADRANTES_POR_PLACA = 80
 MONTAGEM_COLUNAS = 10
-MONTAGEM_ESCALA_CARREGAMENTO = 1.0  # resolucao cheia; <1.0 so para previa
+MONTAGEM_FAIXAS_POR_LADO = 4
+MONTAGEM_ROTULOS_LADOS = ("FRENTE", "VERSO")
+# Altura do separador entre os lados, como fracao da altura de uma celula.
+MONTAGEM_SEPARADOR_LADOS = 0.15
+MONTAGEM_COR_SEPARADOR = (30, 30, 30)  # cinza escuro (BGR)
 MONTAGEM_COR_PLACEHOLDER = (40, 230, 250)  # amarelo (BGR)
+# Os quadrantes sao reduzidos AO CARREGAR para no maximo este multiplo da
+# altura que a celula tera no arquivo final. Montar 80 quadrantes de ~5000 px
+# em resolucao cheia passaria de 7 GB de RAM para entregar 1920 x 1080; 2x
+# de sobra mantem a reducao final com boa nitidez (INTER_AREA).
+MONTAGEM_SUPERAMOSTRAGEM = 2
 
-# --- Exportacao de cada placa ---------------------------------------------
-# JPEG em multiplas larguras (nome, largura_px, qualidade). Larguras maiores
-# que a placa sao puladas - nao ha upscale.
-EXPORTACAO_RESOLUCOES = [
-    ("10k", 10000, 92),
-    ("4k", 3840, 92),
-    ("1200p", 1200, 90),
-    ("720p", 720, 88),
-]
-EXPORTACAO_INCLUIR_PNG_LOSSLESS = True
-EXPORTACAO_INCLUIR_TIFF = True
-EXPORTACAO_INCLUIR_WEBP = True
-# O formato WEBP nao aceita lado maior que 16383 px. A placa em resolucao
-# cheia passa disso com folga, e nesse caso o WEBP sai na maior largura que
-# cabe (com aviso no log) em vez de falhar.
-EXPORTACAO_WEBP_LADO_MAXIMO = 16383
+# --- Exportacao da placa ----------------------------------------------------
+# UM arquivo por placa: <placa>.png com exatamente EXPORTACAO_LARGURA x
+# EXPORTACAO_ALTURA. A placa e encaixada sem distorcer (sobra vira fundo) e
+# os rotulos dos lados vao na margem esquerda.
+EXPORTACAO_LARGURA = 1920
+EXPORTACAO_ALTURA = 1080
+EXPORTACAO_COR_FUNDO = (30, 30, 30)  # cinza escuro (BGR)
+EXPORTACAO_COR_ROTULO = (255, 255, 255)
 
 # ---------------------------------------------------------------------------
 # Paralelismo

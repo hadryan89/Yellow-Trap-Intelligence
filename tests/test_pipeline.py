@@ -215,13 +215,11 @@ def test_modo_grid_ponta_a_ponta(pastas_isoladas, foto_valida):
     assert relatorio.exists()
     assert json.loads(relatorio.read_text(encoding="utf-8"))["modo"] == "grid"
 
-    # Montagem: a armadilha inteira rende duas placas, uma por lado do papel.
-    assert [p["nome"] for p in sumario.placas] == ["VARD14A1-VARD14D10",
-                                                   "VARD14E1-VARD14H10"]
-    assert all(p["placeholders"] == 0 for p in sumario.placas)
+    # Montagem: a armadilha inteira rende UMA imagem com frente e verso.
+    assert [p["nome"] for p in sumario.placas] == ["VARD14A1-VARD14H10"]
+    assert sumario.placas[0]["placeholders"] == 0
     placas = pastas_isoladas["PASTA_PLACAS"] / "LOTE_TESTE"
-    assert (placas / "VARD14A1-VARD14D10_LOSSLESS.png").exists()
-    assert (placas / "VARD14E1-VARD14H10_LOSSLESS.png").exists()
+    assert [p.name for p in placas.iterdir()] == ["VARD14A1-VARD14H10.png"]
 
 
 def test_modo_grid_com_lote_incompleto(pastas_isoladas, foto_valida):
@@ -526,7 +524,7 @@ def _ler(caminho):
 
 
 def test_montagem_e_a_ultima_etapa_do_lote(pastas_isoladas, foto_valida):
-    """3 fotos no grid: 3 quadrantes e UMA placa de 4 x 10 com 37 placeholders."""
+    """3 fotos no grid: 3 quadrantes e UMA placa de 80 celulas com 77 placeholders."""
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=3)
     sumario = executar_processamento(_opcoes(pastas_isoladas, modo="grid",
                                              lote_id="LOTE_PLACA"))
@@ -537,31 +535,26 @@ def test_montagem_e_a_ultima_etapa_do_lote(pastas_isoladas, foto_valida):
     placa_info = sumario.placas[0]
     assert placa_info["nome"] == "VARD14A1-VARD14A3"
     assert placa_info["quadrantes"] == 3
-    assert placa_info["placeholders"] == 37
+    assert placa_info["placeholders"] == 77
 
     pasta = pastas_isoladas["PASTA_PLACAS"] / "LOTE_PLACA"
     assert sumario.pasta_placas == str(pasta)
-    assert set(placa_info["arquivos"]) <= {p.name for p in pasta.iterdir()}
+    assert placa_info["arquivos"] == ["VARD14A1-VARD14A3.png"]
+    assert {p.name for p in pasta.iterdir()} == {"VARD14A1-VARD14A3.png"}
 
-    placa = _ler(pasta / "VARD14A1-VARD14A3_LOSSLESS.png")
-    altura_celula, largura_celula = placa_info["tamanho_celula"]
-    assert placa.shape[:2] == (4 * altura_celula, 10 * largura_celula)
-    # Quadrante 1 no canto de cima a esquerda; a celula 4 ja e placeholder.
-    quadrante = _ler(pastas_isoladas["PASTA_RECORTADAS"] / "VARD14A1.png")
-    assert (placa[:altura_celula, :largura_celula] == quadrante).all()
-    assert (placa[0, 3 * largura_celula] == settings.MONTAGEM_COR_PLACEHOLDER).all()
+    quadro = _ler(pasta / "VARD14A1-VARD14A3.png")
+    assert quadro.shape == (1080, 1920, 3)
 
     dados = json.loads((pastas_isoladas["PASTA_RELATORIOS"] / "LOTE_PLACA"
                         / "sumario.json").read_text(encoding="utf-8"))
     assert dados["placas"][0]["nome"] == "VARD14A1-VARD14A3"
 
 
-def test_montagem_agrupa_de_40_em_40(pastas_isoladas, foto_valida, monkeypatch):
-    """Sequencial: as placas seguem a ordem do lote, 40 quadrantes por placa."""
+def test_montagem_agrupa_de_80_em_80(pastas_isoladas, foto_valida, monkeypatch):
+    """Sequencial: as placas seguem a ordem do lote, 80 quadrantes por placa."""
     monkeypatch.setattr(settings, "MONTAGEM_QUADRANTES_POR_PLACA", 4)
     monkeypatch.setattr(settings, "MONTAGEM_COLUNAS", 2)
-    monkeypatch.setattr(settings, "EXPORTACAO_INCLUIR_TIFF", False)
-    monkeypatch.setattr(settings, "EXPORTACAO_INCLUIR_WEBP", False)
+    monkeypatch.setattr(settings, "MONTAGEM_FAIXAS_POR_LADO", 1)
     _povoar_entrada(pastas_isoladas["PASTA_ENTRADA"], foto_valida, quantidade=10)
 
     sumario = executar_processamento(_opcoes(pastas_isoladas, modo="sequencial",
@@ -602,12 +595,7 @@ def test_quadrante_que_falhou_vira_placeholder(pastas_isoladas, foto_valida):
     placa_info = sumario.placas[0]
     assert placa_info["faltantes"] == ["VARD14A2"]
     assert placa_info["quadrantes"] == 2
-
-    placa = _ler(pastas_isoladas["PASTA_PLACAS"] / "LOTE_BURACO"
-                 / "VARD14A1-VARD14A3_LOSSLESS.png")
-    altura_celula, largura_celula = placa_info["tamanho_celula"]
-    celula_2 = placa[:altura_celula, largura_celula:2 * largura_celula]
-    assert (celula_2 == settings.MONTAGEM_COR_PLACEHOLDER).all()
+    assert placa_info["placeholders"] == 78
 
 
 def test_sem_montagem_termina_no_recorte(pastas_isoladas, foto_valida):

@@ -1,17 +1,22 @@
 """
 Protocolo 3 - Montagem da placa (stitching).
 
-Depois do recorte, os quadrantes sao juntados de 40 em 40 - na ordem do
-lote - de volta no LAYOUT HORIZONTAL da placa:
+Depois do recorte, os quadrantes sao juntados de 80 em 80 - na ordem do
+lote - numa UNICA imagem com os dois lados do papel, cada um no LAYOUT
+HORIZONTAL da placa:
 
-    [A1 A2 A3 ... A10]   <- faixa de cima
+    [A1 A2 A3 ... A10]   <- frente, faixa de cima
     [B1 B2 B3 ... B10]
     [C1 C2 C3 ... C10]
-    [D1 D2 D3 ... D10]   <- faixa de baixo
+    [D1 D2 D3 ... D10]   <- frente, faixa de baixo
+    ==================   <- separador entre os lados
+    [E1 E2 E3 ... E10]   <- verso, faixa de cima
+    ...
+    [H1 H2 H3 ... H10]   <- verso, faixa de baixo
 
-Cada faixa tem 10 celulas lado a lado e as 4 faixas sao empilhadas -> placa
-de 10 celulas de largura x 4 de altura. No modo grid a armadilha inteira
-(VARD14A1..VARD14H10) rende duas placas: A..D e E..H, um lado do papel cada.
+Cada faixa tem 10 celulas lado a lado; 4 faixas formam um lado. No modo grid
+a armadilha inteira (VARD14A1..VARD14H10) rende UMA imagem com os 80
+quadrantes.
 
 Celulas ausentes viram um placeholder amarelo (40, 230, 250) em BGR, o que
 torna visualmente obvio qual quadrante faltou. Quadrantes de tamanhos
@@ -20,8 +25,9 @@ diferentes sao normalizados para a mediana antes de encostar uns nos outros.
 A logica de carregar / normalizar / montar vem do Colab. A unica diferenca e
 que a placa e preenchida num array pre-alocado em vez de hstack + vstack: o
 resultado e o mesmo pixel a pixel (ha teste travando isso), sem as copias
-intermediarias das faixas, e cada quadrante e liberado assim que entra na
-placa - uma placa de 40 quadrantes de ~4700 px passa de 2,5 GB.
+intermediarias das faixas. Como a entrega final e 1920 x 1080, cada
+quadrante ja e reduzido ao ser carregado - em resolucao cheia, 80 quadrantes
+de ~5000 px passariam de 7 GB.
 """
 
 from __future__ import annotations
@@ -44,6 +50,8 @@ __all__ = [
     "listar_quadrantes",
     "carregar_quadrante",
     "normalizar_tamanhos",
+    "altura_separador",
+    "altura_maxima_celula",
     "montar_placa",
     "montar_placa_do_plano",
 ]
@@ -70,11 +78,11 @@ def planejar_placas(caminhos, por_placa: int | None = None) -> list[PlanoPlaca]:
     """
     Fatia a lista ORDENADA de quadrantes em placas de `por_placa` celulas.
 
-    A ordem e a do lote: os 40 primeiros vao para a placa 1, e assim por
-    diante. A ultima placa pode vir incompleta - as celulas que sobram ficam
+    A ordem e a do lote: os 80 primeiros vao para a placa 1 (40 de frente,
+    40 de verso), e assim por diante. A ultima placa pode vir incompleta - as celulas que sobram ficam
     como placeholder, para a placa manter sempre o mesmo formato.
 
-    O nome de cada placa e "<primeiro>-<ultimo>" (VARD14A1-VARD14D10), o que
+    O nome de cada placa e "<primeiro>-<ultimo>" (VARD14A1-VARD14H10), o que
     a identifica no acervo sem precisar de numeracao propria.
     """
     por_placa = por_placa or settings.MONTAGEM_QUADRANTES_POR_PLACA
@@ -103,8 +111,8 @@ def listar_quadrantes(pasta: Path | str) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def carregar_quadrante(caminho: Path, escala: float = 1.0):
-    """Le um quadrante (None se nao existe ou e ilegivel), opcionalmente reduzido."""
+def carregar_quadrante(caminho: Path, altura_max: int | None = None):
+    """Le um quadrante (None se nao existe ou e ilegivel), reduzido a `altura_max`."""
     caminho = Path(caminho)
     if not caminho.is_file():
         return None
@@ -115,9 +123,10 @@ def carregar_quadrante(caminho: Path, escala: float = 1.0):
     if imagem is None:
         logger.error("Quadrante ilegivel, vira placeholder: %s", caminho.name)
         return None
-    if escala < 1.0:
-        h, w = imagem.shape[:2]
-        imagem = cv2.resize(imagem, (int(w * escala), int(h * escala)),
+    h, w = imagem.shape[:2]
+    if altura_max and h > altura_max:
+        largura = max(1, round(w * altura_max / h))
+        imagem = cv2.resize(imagem, (largura, altura_max),
                             interpolation=cv2.INTER_AREA)
     return imagem
 
@@ -141,30 +150,46 @@ def normalizar_tamanhos(quadrantes: dict) -> dict:
     return normalizados
 
 
+def altura_separador(altura_celula: int) -> int:
+    """Altura, em px, da faixa que separa um lado do papel do outro."""
+    return max(1, round(altura_celula * settings.MONTAGEM_SEPARADOR_LADOS))
+
+
 def montar_placa(quadrantes: dict, total_celulas: int, colunas: int | None = None,
-                 cor_placeholder=None) -> np.ndarray:
+                 cor_placeholder=None, faixas_por_lado: int | None = None) -> np.ndarray:
     """
     Layout HORIZONTAL a partir de {posicao: imagem} ja normalizado.
 
-    A posicao i vai para a faixa i // colunas, celula i % colunas. Posicoes
-    sem imagem ficam com a cor do placeholder. Os quadrantes sao consumidos
-    (removidos do dicionario) a medida que entram na placa, para a memoria
-    nao carregar a placa e os 40 quadrantes ao mesmo tempo.
+    A posicao i vai para a faixa i // colunas, celula i % colunas. A cada
+    `faixas_por_lado` faixas comeca outro lado do papel, e entre os lados
+    entra um separador. Posicoes sem imagem ficam com a cor do placeholder.
+    Os quadrantes sao consumidos (removidos do dicionario) a medida que
+    entram na placa, para a memoria nao carregar a placa e os quadrantes ao
+    mesmo tempo.
     """
     if not quadrantes:
         raise ValueError("Nenhum quadrante carregado.")
     colunas = colunas or settings.MONTAGEM_COLUNAS
+    faixas_por_lado = faixas_por_lado or settings.MONTAGEM_FAIXAS_POR_LADO
     if cor_placeholder is None:
         cor_placeholder = settings.MONTAGEM_COR_PLACEHOLDER
 
     altura, largura, canais = next(iter(quadrantes.values())).shape
     faixas = -(-total_celulas // colunas)  # teto
-    placa = np.empty((faixas * altura, colunas * largura, canais), dtype=np.uint8)
+    lados = -(-faixas // faixas_por_lado)
+    separador = altura_separador(altura)
+    altura_lado = faixas_por_lado * altura + separador
+    placa = np.empty((faixas * altura + (lados - 1) * separador,
+                      colunas * largura, canais), dtype=np.uint8)
     placa[:] = cor_placeholder
+    for lado in range(1, lados):
+        y = lado * altura_lado - separador
+        placa[y:y + separador] = settings.MONTAGEM_COR_SEPARADOR
 
     for posicao in sorted(quadrantes):
         linha, coluna = divmod(posicao, colunas)
-        y, x = linha * altura, coluna * largura
+        lado, faixa = divmod(linha, faixas_por_lado)
+        y, x = lado * altura_lado + faixa * altura, coluna * largura
         placa[y:y + altura, x:x + largura] = quadrantes.pop(posicao)
 
     gc.collect()
@@ -176,23 +201,38 @@ def montar_placa(quadrantes: dict, total_celulas: int, colunas: int | None = Non
 # ---------------------------------------------------------------------------
 
 
-def montar_placa_do_plano(plano: PlanoPlaca, escala: float | None = None,
-                          colunas: int | None = None) -> tuple[np.ndarray, dict]:
+def altura_maxima_celula(total_celulas: int, colunas: int | None = None) -> int:
+    """
+    Altura ate a qual cada quadrante e reduzido ao carregar.
+
+    E a altura que a celula tera no arquivo final (EXPORTACAO_ALTURA dividida
+    pelas faixas), vezes MONTAGEM_SUPERAMOSTRAGEM de folga para a reducao
+    final continuar nitida.
+    """
+    colunas = colunas or settings.MONTAGEM_COLUNAS
+    faixas = -(-total_celulas // colunas)
+    return settings.MONTAGEM_SUPERAMOSTRAGEM * -(-settings.EXPORTACAO_ALTURA // faixas)
+
+
+def montar_placa_do_plano(plano: PlanoPlaca, colunas: int | None = None,
+                          altura_max: int | None = None) -> tuple[np.ndarray, dict]:
     """
     Carrega -> normaliza -> monta UMA placa.
 
-    Retorna (placa, estatisticas). Levanta ValueError se nenhuma celula da
-    placa tem quadrante legivel.
+    `altura_max` limita a altura de cada quadrante carregado (default:
+    altura_maxima_celula()). Retorna (placa, estatisticas). Levanta
+    ValueError se nenhuma celula da placa tem quadrante legivel.
     """
-    escala = settings.MONTAGEM_ESCALA_CARREGAMENTO if escala is None else escala
     colunas = colunas or settings.MONTAGEM_COLUNAS
+    if altura_max is None:
+        altura_max = altura_maxima_celula(len(plano.celulas), colunas)
 
     quadrantes = {}
     faltantes = []
     for posicao, caminho in enumerate(plano.celulas):
         if caminho is None:
             continue
-        imagem = carregar_quadrante(caminho, escala)
+        imagem = carregar_quadrante(caminho, altura_max)
         if imagem is None:
             faltantes.append(Path(caminho).stem)
             continue

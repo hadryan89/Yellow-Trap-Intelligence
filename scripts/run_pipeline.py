@@ -5,8 +5,9 @@ Tres etapas, nesta ordem:
 
     1. nomeacao   da o nome final a cada foto (ver --modo)
     2. recorte    um quadrante por foto em data/03_recortadas/
-    3. montagem   junta os quadrantes de 40 em 40 no formato da placa
-                  (4 faixas de 10) em data/04_placas_montadas/<lote_id>/
+    3. montagem   junta os quadrantes de 80 em 80 numa imagem 1920 x 1080
+                  com frente e verso da placa (4 faixas de 10 cada) em
+                  data/04_placas_montadas/<lote_id>/
 
 Dois modos de nomeacao (e um terceiro que nao renomeia):
 
@@ -36,9 +37,9 @@ O quadrante sai COM as linhas da grade nas quatro bordas, para que a
 montagem remonte a placa com a grade visivel. Use --borda dentro se precisar
 do quadrante sem traco nenhum.
 
-No modo grid a armadilha inteira (80 fotos) rende duas placas, uma por lado
-do papel: VARD14A1-VARD14D10 e VARD14E1-VARD14H10. --sem-montagem para no
-recorte; --escala-montagem 0.25 gera uma previa leve das placas.
+No modo grid a armadilha inteira (80 fotos) rende UMA imagem com os dois
+lados do papel - frente (A..D) em cima, verso (E..H) embaixo:
+VARD14A1-VARD14H10.png. --sem-montagem para no recorte.
 
 Codigo de saida:
     0  lote concluido sem nenhuma falha
@@ -135,9 +136,6 @@ def construir_parser() -> argparse.ArgumentParser:
     grupo_placa.add_argument("--saida-placas", type=Path, default=None,
                              help="pasta das placas montadas (default: "
                                   "data/04_placas_montadas)")
-    grupo_placa.add_argument("--escala-montagem", type=float, default=None,
-                             help="escala dos quadrantes na placa: 1.0 = "
-                                  "resolucao cheia | <1.0 = previa rapida")
 
     grupo_exec = parser.add_argument_group("execucao")
     grupo_exec.add_argument("--retomar", dest="pular_existentes",
@@ -196,7 +194,6 @@ def _montar_opcoes(args) -> OpcoesProcessamento:
         simular=args.simular,
         montar=args.montar,
         pasta_placas=args.saida_placas,
-        escala_montagem=args.escala_montagem,
     )
 
 
