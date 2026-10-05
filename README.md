@@ -9,7 +9,8 @@ afídeos, cigarrinhas, mosca branca.
 O sistema recebe as fotos individuais dos quadrantes da placa (capturadas por
 câmera/microscópio), **renomeia** segundo o esquema escolhido, **recorta** o
 quadrante central de cada uma e, por último, **monta a placa**: junta os
-quadrantes de 40 em 40 de volta no formato da armadilha (4 faixas de 10). A
+quadrantes de 80 em 80 numa única imagem 1920 × 1080 com **frente e verso**
+da armadilha (4 faixas de 10 em cada lado). A
 entrega final são os quadrantes limpos e as placas montadas — a
 identificação das pragas por *deep learning* é uma etapa posterior, fora do
 escopo deste repositório.
@@ -101,13 +102,12 @@ data/01_entrada_bruta/     DSC0001.JPG ... DSC0080.JPG   (nomes da câmera)
 data/03_recortadas/        VARD14A1.png … VARD14H10.png
                            ou   VARD1.png, VARD2.png …
         │
-        │  Etapa 3 — montagem: junta os quadrantes de 40 em 40, na ordem
-        │            do lote, no formato da placa (4 faixas de 10) e
-        │            exporta cada placa em várias resoluções
+        │  Etapa 3 — montagem: junta os quadrantes de 80 em 80, na ordem
+        │            do lote, numa imagem com frente (4 faixas de 10)
+        │            em cima e verso embaixo, exportada em 1920 x 1080
         ▼
 data/04_placas_montadas/<lote_id>/
-                           VARD14A1-VARD14D10_*.jpg|png|tiff|webp  (lado 1)
-                           VARD14E1-VARD14H10_*.jpg|png|tiff|webp  (lado 2)
+                           VARD14A1-VARD14H10.png   (frente + verso)
         │
         └─ data/_relatorios/<lote_id>/sumario.json
 
@@ -117,46 +117,46 @@ data/02_renomeadas/        vazia por padrão (ver "materialização" abaixo)
 ### A montagem da placa
 
 A última etapa devolve os quadrantes ao formato da armadilha. Cada grupo de
-**40 quadrantes** vira uma placa em **layout horizontal**: os 10 primeiros são
-a faixa de cima, os 10 seguintes a segunda faixa, e assim por diante:
+**80 quadrantes** vira **uma única imagem com os dois lados do papel**: os 40
+primeiros são a **frente**, em cima, e os 40 seguintes o **verso**, embaixo.
+Cada lado está em **layout horizontal** — 4 faixas de 10 — e uma faixa escura
+separa um lado do outro:
 
 ```
-[A1 A2 A3 ... A10]   <- faixa de cima    (quadrantes  1..10)
-[B1 B2 B3 ... B10]                       (quadrantes 11..20)
-[C1 C2 C3 ... C10]                       (quadrantes 21..30)
-[D1 D2 D3 ... D10]   <- faixa de baixo   (quadrantes 31..40)
+FRENTE  [A1 A2 A3 ... A10]   <- faixa de cima    (quadrantes  1..10)
+        [B1 B2 B3 ... B10]                       (quadrantes 11..20)
+        [C1 C2 C3 ... C10]                       (quadrantes 21..30)
+        [D1 D2 D3 ... D10]   <- faixa de baixo   (quadrantes 31..40)
+        ==================   <- separador
+VERSO   [E1 E2 E3 ... E10]   <- faixa de cima    (quadrantes 41..50)
+        ...
+        [H1 H2 H3 ... H10]   <- faixa de baixo   (quadrantes 71..80)
 ```
 
-- **modo `grid`**: a armadilha inteira (80 fotos) rende **duas placas**, uma por
-  lado do papel — `VARD14A1-VARD14D10` (colunas A..D) e `VARD14E1-VARD14H10`
-  (colunas E..H);
+- **modo `grid`**: a armadilha inteira (80 fotos) rende **uma imagem**,
+  `VARD14A1-VARD14H10.png`, com frente (colunas A..D) e verso (E..H);
 - **modos `sequencial` e `recorte`**: a mesma regra na ordem do lote —
-  `VARD1-VARD40`, `VARD41-VARD80`, …;
+  `VARD1-VARD80`, `VARD81-VARD160`, …;
 - **célula sem quadrante** (foto que falhou no recorte, lote incompleto) vira um
   **placeholder amarelo**: a posição continua onde deveria e a falta salta aos
-  olhos. A última placa de um lote que não é múltiplo de 40 sai no mesmo
-  formato, com o resto em amarelo;
+  olhos. Um lote só com a frente sai com o verso inteiro em amarelo;
 - quadrantes de **tamanhos diferentes** são normalizados para a mediana antes
   de encostar uns nos outros;
 - a placa é montada a partir dos **nomes do plano do lote** — quadrantes que
   sobraram de outro lote em `03_recortadas/` não entram nela.
 
-Cada placa sai em `data/04_placas_montadas/<lote_id>/`, com o nome dela como
-prefixo de cada arquivo:
+Cada placa sai em `data/04_placas_montadas/<lote_id>/` como **um único
+arquivo**, `<placa>.png`, com exatamente **1920 × 1080 px**. A placa é
+encaixada sem distorcer, centralizada sobre fundo escuro, e os rótulos
+**FRENTE** e **VERSO** vão na margem esquerda, na altura de cada lado.
 
-| Arquivo | Conteúdo |
-|---|---|
-| `<placa>_10k.jpg`, `_4k.jpg`, `_1200p.jpg`, `_720p.jpg` | JPEG nas larguras de `EXPORTACAO_RESOLUCOES` (sem upscale) |
-| `<placa>_LOSSLESS.png` | resolução cheia, sem perda |
-| `<placa>_CIENTIFICO.tiff` | resolução cheia, TIFF LZW (abre no ImageJ/Fiji) |
-| `<placa>_WEBP.webp` | WEBP q95 — reduzido para caber no limite do formato (16.383 px por lado) |
-
-Em resolução cheia uma placa de 40 quadrantes de ~4.700 px tem ~47.000 × 19.000
-px: o PNG e o TIFF passam de 1 GB cada e a montagem leva ~3,5 min por placa
-(medido nesta máquina). Para conferir rápido, `--escala-montagem 0.25` gera uma
-prévia leve; para parar no recorte, `--sem-montagem`. Uma placa que não puder
-ser montada vira falha registrada (`[montagem]`) e **não** derruba o lote — os
-quadrantes já estão gravados.
+Os quadrantes são reduzidos já ao serem carregados (até 2× a altura que terão
+no arquivo final), então montar a armadilha inteira leva menos de um minuto e
+pouca memória — em resolução cheia, 80 quadrantes passariam de 7 GB de RAM.
+A resolução cheia de cada quadrante continua em `03_recortadas/`. Para parar
+no recorte, `--sem-montagem`. Uma placa que não puder ser montada vira falha
+registrada (`[montagem]`) e **não** derruba o lote — os quadrantes já estão
+gravados.
 
 Remontar uma placa depois de trocar um quadrante à mão, sem refazer o recorte:
 
@@ -199,7 +199,7 @@ comando:
 | `dentro` | na beirada **interna** do traço | quadrante sem traço nenhum (comportamento até a 2.0) |
 | `meia_linha` | no **centro** do traço | metade do traço de cada lado |
 
-O padrão é `linha` porque a montagem — juntar os quadrantes de 40 em 40 de volta
+O padrão é `linha` porque a montagem — juntar os quadrantes de 80 em 80 de volta
 na placa — precisa dos traços para remontar a grade. **Não sobra margem**: nem papel,
 nem faixa do quadrante vizinho, nem moldura. A primeira fileira de pixels de cada
 lado já é o traço, então quadrado encosta em quadrado na montagem.
@@ -598,8 +598,8 @@ python scripts/run_pipeline.py --modo sequencial --borda dentro
 # Só nomear e recortar, sem montar as placas
 python scripts/run_pipeline.py --modo grid --armadilha 14 --sem-montagem
 
-# Placas em prévia leve (25% da resolução) e em outra pasta
-python scripts/run_pipeline.py --modo grid --armadilha 14 --escala-montagem 0.25 --saida-placas "D:\previas"
+# Placas em outra pasta
+python scripts/run_pipeline.py --modo grid --armadilha 14 --saida-placas "D:\placas"
 ```
 
 ### Modo watcher (contínuo, vigiando a pasta)
@@ -859,12 +859,14 @@ Ele é pulado automaticamente quando o acervo não está no disco.
 | `RECORTE_PULAR_EXISTENTES` | `False` | retomada automática |
 | `LIMPAR_PASTAS_INTERMEDIARIAS` | `False` | esvazia `03_recortadas` antes do lote |
 | `MONTAGEM_ATIVA` | `True` | roda a etapa 3; `--sem-montagem` desliga por execução |
-| `MONTAGEM_QUADRANTES_POR_PLACA` | `40` | quadrantes por placa |
-| `MONTAGEM_COLUNAS` | `10` | quadrantes por faixa (40 / 10 = 4 faixas) |
-| `MONTAGEM_ESCALA_CARREGAMENTO` | `1.0` | escala dos quadrantes na placa; `< 1.0` só para prévia |
+| `MONTAGEM_QUADRANTES_POR_PLACA` | `80` | quadrantes por placa (frente + verso) |
+| `MONTAGEM_COLUNAS` | `10` | quadrantes por faixa |
+| `MONTAGEM_FAIXAS_POR_LADO` | `4` | faixas de cada lado do papel (4 × 10 = 40 por lado) |
+| `MONTAGEM_ROTULOS_LADOS` | `("FRENTE", "VERSO")` | rótulos na margem, de cima para baixo |
+| `MONTAGEM_SEPARADOR_LADOS` | `0.15` | altura do separador entre os lados, em fração da célula |
 | `MONTAGEM_COR_PLACEHOLDER` | `(40, 230, 250)` | cor (BGR) da célula sem quadrante — amarelo |
-| `EXPORTACAO_RESOLUCOES` | `10k, 4k, 1200p, 720p` | larguras dos JPEGs de cada placa |
-| `EXPORTACAO_INCLUIR_PNG_LOSSLESS` / `_TIFF` / `_WEBP` | `True` | formatos extras de cada placa |
+| `MONTAGEM_SUPERAMOSTRAGEM` | `2` | o quadrante é carregado com até 2× a altura que terá no arquivo final |
+| `EXPORTACAO_LARGURA` / `_ALTURA` | `1920` / `1080` | tamanho exato do PNG de cada placa |
 | `NUM_WORKERS` | `None` | processos paralelos; `None` = CPUs − 1 |
 | `PARALELISMO_JANELA_POR_WORKER` | `4` | tarefas em voo por worker |
 | `PARALELISMO_LIMIAR_STREAMING` | `500` | a partir daqui a agregação é incremental |
@@ -1050,8 +1052,9 @@ primeira execução — nada de binário no repositório.
 - **robustez**: foto corrompida não derruba o lote, arquivo sumido no meio da
   cópia não derruba a etapa, ordem dos resultados preservada no paralelismo,
   janela de submissão não perde item, retomada não reprocessa.
-- **a montagem da placa** (`test_montagem.py`): 4 faixas de 10 com `A1..A10`
-  em cima, a armadilha inteira vira 2 placas (`A..D` e `E..H`), quadrante que
+- **a montagem da placa** (`test_montagem.py`): a armadilha inteira vira UMA
+  imagem com a frente (`A..D`) em cima e o verso (`E..H`) embaixo, 4 faixas de
+  10 em cada lado, exportada num único PNG 1920 × 1080 rotulado, quadrante que
   falhou vira placeholder amarelo na posição certa, quadrante de outro lote não
   entra, o preenchimento pré-alocado é pixel a pixel igual ao `hstack` +
   `vstack` do Colab, e uma placa que falha não derruba o lote.
@@ -1196,6 +1199,24 @@ rastreável pelo `sumario.json`.
 ---
 
 ## Mudanças recentes
+
+### Frente e verso numa única imagem 1920 × 1080
+
+**Antes:** a armadilha inteira (80 fotos) rendia duas placas separadas, uma
+por lado, e cada placa saía em sete arquivos (JPEG 10k/4k/1200p/720p, PNG,
+TIFF e WEBP) — mais de 2 GB por placa, e quem abria um arquivo via só um lado.
+
+**Agora:** a montagem junta os quadrantes de 80 em 80 numa **única imagem com
+os dois lados** — frente (`A..D`) em cima, verso (`E..H`) embaixo, rotulados —
+e grava **um só arquivo**, `<placa>.png`, em **1920 × 1080**. Ver [A montagem
+da placa](#a-montagem-da-placa).
+
+**O que muda para quem já usava:** `VARD14A1-VARD14D10_*` e
+`VARD14E1-VARD14H10_*` viram `VARD14A1-VARD14H10.png`. Saíram
+`--escala-montagem` (e o `--escala` de `run_apenas_montagem.py`),
+`MONTAGEM_ESCALA_CARREGAMENTO`, `EXPORTACAO_RESOLUCOES` e
+`EXPORTACAO_INCLUIR_*`. A resolução cheia continua nos quadrantes de
+`03_recortadas/`.
 
 ### A montagem da placa voltou, como última etapa
 
