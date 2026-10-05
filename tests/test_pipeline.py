@@ -21,6 +21,7 @@ from src.opcoes import OpcoesProcessamento
 from src.paralelismo import executar_em_paralelo, resolver_num_workers
 from src.pipeline import executar_pipeline_completo, executar_processamento
 from src.recorte import processar_foto, processar_item
+from tests.conftest import RAIZ
 
 
 def _povoar_entrada(pasta, foto_modelo, quantidade=40, prefixo="IMG"):
@@ -88,6 +89,10 @@ def test_uma_foto_ruim_nao_derruba_o_lote(tmp_path, foto_valida):
     falha = next(r for r in resultados if not r["sucesso"])
     assert falha["arquivo"] == "OK_004.png"
     assert falha["erro"]
+    # O worker registra a falha na pasta da sessao de testes, nao em
+    # data/_falhas do projeto real (ver conftest.py).
+    assert list(settings.PASTA_FALHAS.glob("OK_004*.json"))
+    assert not settings.PASTA_FALHAS.is_relative_to(RAIZ)
 
 
 def test_lista_vazia_nao_quebra():

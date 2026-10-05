@@ -9,7 +9,10 @@ Configuracao comum dos testes.
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -19,10 +22,30 @@ RAIZ = Path(__file__).resolve().parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
+# Os workers do recorte sao processos novos ('spawn' no Windows): reimportam
+# config.settings do zero e nao enxergam o monkeypatch de pastas_isoladas.
+# A variavel de ambiente e herdada por eles, entao TODA a sessao de testes -
+# processo pai e workers - aponta para uma pasta temporaria, e uma foto ruim
+# num teste nunca vai parar em data/_falhas do projeto real. Precisa vir
+# ANTES do primeiro import de settings.
+# PASTA_DADOS_REAL guarda o destino original para quem le o acervo de verdade
+# (tests/test_recorte_acervo.py) - leitura apenas.
+PASTA_DADOS_REAL = Path(os.environ.get("YELLOWTRAP_DATA_DIR", RAIZ / "data"))
+_PASTA_SESSAO = Path(tempfile.mkdtemp(prefix="yellowtrap-testes-"))
+os.environ["YELLOWTRAP_DATA_DIR"] = str(_PASTA_SESSAO / "data")
+os.environ["YELLOWTRAP_LOG_DIR"] = str(_PASTA_SESSAO / "logs")
+
 from config import settings  # noqa: E402
 from tests.fixtures import gerar_fixtures  # noqa: E402
 
 PASTA_FIXTURES = RAIZ / "tests" / "fixtures"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _pasta_da_sessao():
+    """Apaga a pasta de dados temporaria da sessao no fim dos testes."""
+    yield _PASTA_SESSAO
+    shutil.rmtree(_PASTA_SESSAO, ignore_errors=True)
 
 
 @pytest.fixture(scope="session", autouse=True)

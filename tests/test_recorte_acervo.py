@@ -33,6 +33,7 @@ import pytest
 
 from config import settings
 from src import recorte as R
+from tests.conftest import PASTA_DADOS_REAL
 
 pytestmark = [pytest.mark.acervo, pytest.mark.lento]
 
@@ -41,8 +42,8 @@ pytestmark = [pytest.mark.acervo, pytest.mark.lento]
 # a beirada externa da linha. Sem traco elas caem para 0.457 (azul) e 0.535
 # (amarela) - a diferenca e a espessura do traco, dos dois lados.
 ACERVOS = [
-    ("azul", settings.PASTA_DADOS / "azuis" / "BlueTrap", "azul", 0.495, 0.02),
-    ("amarela", settings.PASTA_ENTRADA, "amarela", 0.553, 0.02),
+    ("azul", PASTA_DADOS_REAL / "azuis" / "BlueTrap", "azul", 0.495, 0.02),
+    ("amarela", PASTA_DADOS_REAL / "01_entrada_bruta", "amarela", 0.553, 0.02),
 ]
 
 # Fotos que NAO sao de armadilha (fora de foco, sem grade). Elas tem que ser
